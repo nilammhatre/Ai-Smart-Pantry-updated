@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppRouteImport } from './routes/app'
 import { Route as AppIndexRouteImport } from './routes/app.index'
+import { Route as AppScanRouteImport } from './routes/app.scan'
 import { Route as AppPantryIndexRouteImport } from './routes/app.pantry.index'
 import { Route as AppPantryIdRouteImport } from './routes/app.pantry.$id'
 
@@ -30,6 +31,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppRoute,
 } as any)
+const AppScanRoute = AppScanRouteImport.update({
+  id: '/scan',
+  path: '/scan',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppPantryIndexRoute = AppPantryIndexRouteImport.update({
   id: '/pantry/',
   path: '/pantry/',
@@ -44,12 +50,14 @@ const AppPantryIdRoute = AppPantryIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app': typeof AppRouteWithChildren
+  '/app/scan': typeof AppScanRoute
   '/app/': typeof AppIndexRoute
   '/app/pantry/$id': typeof AppPantryIdRoute
   '/app/pantry/': typeof AppPantryIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/app/scan': typeof AppScanRoute
   '/app': typeof AppIndexRoute
   '/app/pantry/$id': typeof AppPantryIdRoute
   '/app/pantry': typeof AppPantryIndexRoute
@@ -58,16 +66,25 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/app': typeof AppRouteWithChildren
+  '/app/scan': typeof AppScanRoute
   '/app/': typeof AppIndexRoute
   '/app/pantry/$id': typeof AppPantryIdRoute
   '/app/pantry/': typeof AppPantryIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/app' | '/app/' | '/app/pantry/$id' | '/app/pantry/'
+  fullPaths:
+    '/' | '/app' | '/app/scan' | '/app/' | '/app/pantry/$id' | '/app/pantry/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/app' | '/app/pantry/$id' | '/app/pantry'
-  id: '__root__' | '/' | '/app' | '/app/' | '/app/pantry/$id' | '/app/pantry/'
+  to: '/' | '/app/scan' | '/app' | '/app/pantry/$id' | '/app/pantry'
+  id:
+    | '__root__'
+    | '/'
+    | '/app'
+    | '/app/scan'
+    | '/app/'
+    | '/app/pantry/$id'
+    | '/app/pantry/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -98,6 +115,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/scan': {
+      id: '/app/scan'
+      path: '/scan'
+      fullPath: '/app/scan'
+      preLoaderRoute: typeof AppScanRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/app/pantry/': {
       id: '/app/pantry/'
       path: '/pantry'
@@ -116,12 +140,14 @@ declare module '@tanstack/react-router' {
 }
 
 interface AppRouteChildren {
+  AppScanRoute: typeof AppScanRoute
   AppIndexRoute: typeof AppIndexRoute
   AppPantryIdRoute: typeof AppPantryIdRoute
   AppPantryIndexRoute: typeof AppPantryIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppScanRoute: AppScanRoute,
   AppIndexRoute: AppIndexRoute,
   AppPantryIdRoute: AppPantryIdRoute,
   AppPantryIndexRoute: AppPantryIndexRoute,
