@@ -50,7 +50,7 @@ function Dashboard() {
         <Button asChild variant="hero" size="lg"><Link to="/app/scan"><ScanLine /> Scan food</Link></Button>
       </div>
 
-      <div className="no-scrollbar -mx-4 flex snap-x gap-3 overflow-x-auto px-4 sm:mx-0 sm:grid sm:grid-cols-4 sm:px-0 xl:grid-cols-7">
+      <div className="no-scrollbar -mx-4 flex snap-x gap-3 overflow-x-auto px-4 sm:mx-0 sm:grid sm:grid-cols-4 sm:px-0 2xl:grid-cols-7">
         {stats.map((s, i) => (
           <div key={s.label} className="card-surface lift min-w-[150px] snap-start p-4 animate-rise" style={{ animationDelay: `${i * 50}ms` }}>
             <div className={`grid h-9 w-9 place-items-center rounded-xl ${s.tone}`}><s.icon className="h-4 w-4" /></div>
