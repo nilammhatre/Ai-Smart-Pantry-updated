@@ -8,3 +8,5 @@
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
+
+- App state (pantry, shopping, notifications, history) lives in a React context persisted to localStorage (src/lib/pantry-store.tsx); AI scans and Pantry AI replies are simulated client-side — swap in Lovable Cloud + AI when real backend is needed.
