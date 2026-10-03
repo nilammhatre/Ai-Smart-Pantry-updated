@@ -13,8 +13,13 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppRouteImport } from './routes/app'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as AppAlertsRouteImport } from './routes/app.alerts'
+import { Route as AppAssistantRouteImport } from './routes/app.assistant'
+import { Route as AppHistoryRouteImport } from './routes/app.history'
+import { Route as AppInsightsRouteImport } from './routes/app.insights'
+import { Route as AppNotificationsRouteImport } from './routes/app.notifications'
 import { Route as AppNutritionRouteImport } from './routes/app.nutrition'
 import { Route as AppScanRouteImport } from './routes/app.scan'
+import { Route as AppSettingsRouteImport } from './routes/app.settings'
 import { Route as AppShoppingRouteImport } from './routes/app.shopping'
 import { Route as AppPantryIndexRouteImport } from './routes/app.pantry.index'
 import { Route as AppPantryIdRouteImport } from './routes/app.pantry.$id'
@@ -41,6 +46,26 @@ const AppAlertsRoute = AppAlertsRouteImport.update({
   path: '/alerts',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAssistantRoute = AppAssistantRouteImport.update({
+  id: '/assistant',
+  path: '/assistant',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppHistoryRoute = AppHistoryRouteImport.update({
+  id: '/history',
+  path: '/history',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppInsightsRoute = AppInsightsRouteImport.update({
+  id: '/insights',
+  path: '/insights',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppNotificationsRoute = AppNotificationsRouteImport.update({
+  id: '/notifications',
+  path: '/notifications',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppNutritionRoute = AppNutritionRouteImport.update({
   id: '/nutrition',
   path: '/nutrition',
@@ -49,6 +74,11 @@ const AppNutritionRoute = AppNutritionRouteImport.update({
 const AppScanRoute = AppScanRouteImport.update({
   id: '/scan',
   path: '/scan',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSettingsRoute = AppSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => AppRoute,
 } as any)
 const AppShoppingRoute = AppShoppingRouteImport.update({
@@ -81,8 +111,13 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app': typeof AppRouteWithChildren
   '/app/alerts': typeof AppAlertsRoute
+  '/app/assistant': typeof AppAssistantRoute
+  '/app/history': typeof AppHistoryRoute
+  '/app/insights': typeof AppInsightsRoute
+  '/app/notifications': typeof AppNotificationsRoute
   '/app/nutrition': typeof AppNutritionRoute
   '/app/scan': typeof AppScanRoute
+  '/app/settings': typeof AppSettingsRoute
   '/app/shopping': typeof AppShoppingRoute
   '/app/': typeof AppIndexRoute
   '/app/pantry/$id': typeof AppPantryIdRoute
@@ -93,8 +128,13 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/app/alerts': typeof AppAlertsRoute
+  '/app/assistant': typeof AppAssistantRoute
+  '/app/history': typeof AppHistoryRoute
+  '/app/insights': typeof AppInsightsRoute
+  '/app/notifications': typeof AppNotificationsRoute
   '/app/nutrition': typeof AppNutritionRoute
   '/app/scan': typeof AppScanRoute
+  '/app/settings': typeof AppSettingsRoute
   '/app/shopping': typeof AppShoppingRoute
   '/app': typeof AppIndexRoute
   '/app/pantry/$id': typeof AppPantryIdRoute
@@ -107,8 +147,13 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/app': typeof AppRouteWithChildren
   '/app/alerts': typeof AppAlertsRoute
+  '/app/assistant': typeof AppAssistantRoute
+  '/app/history': typeof AppHistoryRoute
+  '/app/insights': typeof AppInsightsRoute
+  '/app/notifications': typeof AppNotificationsRoute
   '/app/nutrition': typeof AppNutritionRoute
   '/app/scan': typeof AppScanRoute
+  '/app/settings': typeof AppSettingsRoute
   '/app/shopping': typeof AppShoppingRoute
   '/app/': typeof AppIndexRoute
   '/app/pantry/$id': typeof AppPantryIdRoute
@@ -122,8 +167,13 @@ export interface FileRouteTypes {
     | '/'
     | '/app'
     | '/app/alerts'
+    | '/app/assistant'
+    | '/app/history'
+    | '/app/insights'
+    | '/app/notifications'
     | '/app/nutrition'
     | '/app/scan'
+    | '/app/settings'
     | '/app/shopping'
     | '/app/'
     | '/app/pantry/$id'
@@ -134,8 +184,13 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/app/alerts'
+    | '/app/assistant'
+    | '/app/history'
+    | '/app/insights'
+    | '/app/notifications'
     | '/app/nutrition'
     | '/app/scan'
+    | '/app/settings'
     | '/app/shopping'
     | '/app'
     | '/app/pantry/$id'
@@ -147,8 +202,13 @@ export interface FileRouteTypes {
     | '/'
     | '/app'
     | '/app/alerts'
+    | '/app/assistant'
+    | '/app/history'
+    | '/app/insights'
+    | '/app/notifications'
     | '/app/nutrition'
     | '/app/scan'
+    | '/app/settings'
     | '/app/shopping'
     | '/app/'
     | '/app/pantry/$id'
@@ -192,6 +252,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAlertsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/assistant': {
+      id: '/app/assistant'
+      path: '/assistant'
+      fullPath: '/app/assistant'
+      preLoaderRoute: typeof AppAssistantRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/history': {
+      id: '/app/history'
+      path: '/history'
+      fullPath: '/app/history'
+      preLoaderRoute: typeof AppHistoryRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/insights': {
+      id: '/app/insights'
+      path: '/insights'
+      fullPath: '/app/insights'
+      preLoaderRoute: typeof AppInsightsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/notifications': {
+      id: '/app/notifications'
+      path: '/notifications'
+      fullPath: '/app/notifications'
+      preLoaderRoute: typeof AppNotificationsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/app/nutrition': {
       id: '/app/nutrition'
       path: '/nutrition'
@@ -204,6 +292,13 @@ declare module '@tanstack/react-router' {
       path: '/scan'
       fullPath: '/app/scan'
       preLoaderRoute: typeof AppScanRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/settings': {
+      id: '/app/settings'
+      path: '/settings'
+      fullPath: '/app/settings'
+      preLoaderRoute: typeof AppSettingsRouteImport
       parentRoute: typeof AppRoute
     }
     '/app/shopping': {
@@ -246,8 +341,13 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppAlertsRoute: typeof AppAlertsRoute
+  AppAssistantRoute: typeof AppAssistantRoute
+  AppHistoryRoute: typeof AppHistoryRoute
+  AppInsightsRoute: typeof AppInsightsRoute
+  AppNotificationsRoute: typeof AppNotificationsRoute
   AppNutritionRoute: typeof AppNutritionRoute
   AppScanRoute: typeof AppScanRoute
+  AppSettingsRoute: typeof AppSettingsRoute
   AppShoppingRoute: typeof AppShoppingRoute
   AppIndexRoute: typeof AppIndexRoute
   AppPantryIdRoute: typeof AppPantryIdRoute
@@ -258,8 +358,13 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppAlertsRoute: AppAlertsRoute,
+  AppAssistantRoute: AppAssistantRoute,
+  AppHistoryRoute: AppHistoryRoute,
+  AppInsightsRoute: AppInsightsRoute,
+  AppNotificationsRoute: AppNotificationsRoute,
   AppNutritionRoute: AppNutritionRoute,
   AppScanRoute: AppScanRoute,
+  AppSettingsRoute: AppSettingsRoute,
   AppShoppingRoute: AppShoppingRoute,
   AppIndexRoute: AppIndexRoute,
   AppPantryIdRoute: AppPantryIdRoute,
