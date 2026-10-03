@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Boxes, Leaf, AlarmClock, XCircle, PackageCheck, IndianRupee, Recycle, ScanLine, ArrowRight, Tomato, Refrigerator, CookingPot, ShoppingCart, Cloud } from "lucide-react";
+import { Boxes, Leaf, AlarmClock, XCircle, PackageCheck, IndianRupee, Recycle, ScanLine, ArrowRight, Salad, Refrigerator, CookingPot, ShoppingCart, Cloud } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { usePantry } from "@/lib/pantry-store";
@@ -34,7 +34,7 @@ function Dashboard() {
   ];
 
   const actions = [
-    { icon: Tomato, text: "Use tomatoes soon", sub: "3 days left · try Aloo Tamatar", to: "/app/recipes" as const },
+    { icon: Salad, text: "Use tomatoes soon", sub: "3 days left · try Aloo Tamatar", to: "/app/recipes" as const },
     { icon: Refrigerator, text: "Move milk to the refrigerator door", sub: "Keeps 1–2 days longer at 4°C" },
     { icon: CookingPot, text: "Cook spinach today", sub: "Freshness dropping to 58%", to: "/app/recipes" as const },
     { icon: ShoppingCart, text: "Add low-stock rice to shopping list", sub: "Only 500 g left", onClick: () => { addShop({ name: "Basmati Rice", qty: "2 kg", category: "Grains", priority: "High", section: "Running Low" }); toast.success("Rice added to your shopping list."); } },
