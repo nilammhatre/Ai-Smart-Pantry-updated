@@ -12,9 +12,14 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppRouteImport } from './routes/app'
 import { Route as AppIndexRouteImport } from './routes/app.index'
+import { Route as AppAlertsRouteImport } from './routes/app.alerts'
+import { Route as AppNutritionRouteImport } from './routes/app.nutrition'
 import { Route as AppScanRouteImport } from './routes/app.scan'
+import { Route as AppShoppingRouteImport } from './routes/app.shopping'
 import { Route as AppPantryIndexRouteImport } from './routes/app.pantry.index'
 import { Route as AppPantryIdRouteImport } from './routes/app.pantry.$id'
+import { Route as AppRecipesIndexRouteImport } from './routes/app.recipes.index'
+import { Route as AppRecipesIdRouteImport } from './routes/app.recipes.$id'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -31,9 +36,24 @@ const AppIndexRoute = AppIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAlertsRoute = AppAlertsRouteImport.update({
+  id: '/alerts',
+  path: '/alerts',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppNutritionRoute = AppNutritionRouteImport.update({
+  id: '/nutrition',
+  path: '/nutrition',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppScanRoute = AppScanRouteImport.update({
   id: '/scan',
   path: '/scan',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppShoppingRoute = AppShoppingRouteImport.update({
+  id: '/shopping',
+  path: '/shopping',
   getParentRoute: () => AppRoute,
 } as any)
 const AppPantryIndexRoute = AppPantryIndexRouteImport.update({
@@ -46,45 +66,95 @@ const AppPantryIdRoute = AppPantryIdRouteImport.update({
   path: '/pantry/$id',
   getParentRoute: () => AppRoute,
 } as any)
+const AppRecipesIndexRoute = AppRecipesIndexRouteImport.update({
+  id: '/recipes/',
+  path: '/recipes/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppRecipesIdRoute = AppRecipesIdRouteImport.update({
+  id: '/recipes/$id',
+  path: '/recipes/$id',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app': typeof AppRouteWithChildren
+  '/app/alerts': typeof AppAlertsRoute
+  '/app/nutrition': typeof AppNutritionRoute
   '/app/scan': typeof AppScanRoute
+  '/app/shopping': typeof AppShoppingRoute
   '/app/': typeof AppIndexRoute
   '/app/pantry/$id': typeof AppPantryIdRoute
+  '/app/recipes/$id': typeof AppRecipesIdRoute
   '/app/pantry/': typeof AppPantryIndexRoute
+  '/app/recipes/': typeof AppRecipesIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/app/alerts': typeof AppAlertsRoute
+  '/app/nutrition': typeof AppNutritionRoute
   '/app/scan': typeof AppScanRoute
+  '/app/shopping': typeof AppShoppingRoute
   '/app': typeof AppIndexRoute
   '/app/pantry/$id': typeof AppPantryIdRoute
+  '/app/recipes/$id': typeof AppRecipesIdRoute
   '/app/pantry': typeof AppPantryIndexRoute
+  '/app/recipes': typeof AppRecipesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/app': typeof AppRouteWithChildren
+  '/app/alerts': typeof AppAlertsRoute
+  '/app/nutrition': typeof AppNutritionRoute
   '/app/scan': typeof AppScanRoute
+  '/app/shopping': typeof AppShoppingRoute
   '/app/': typeof AppIndexRoute
   '/app/pantry/$id': typeof AppPantryIdRoute
+  '/app/recipes/$id': typeof AppRecipesIdRoute
   '/app/pantry/': typeof AppPantryIndexRoute
+  '/app/recipes/': typeof AppRecipesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/app' | '/app/scan' | '/app/' | '/app/pantry/$id' | '/app/pantry/'
+    | '/'
+    | '/app'
+    | '/app/alerts'
+    | '/app/nutrition'
+    | '/app/scan'
+    | '/app/shopping'
+    | '/app/'
+    | '/app/pantry/$id'
+    | '/app/recipes/$id'
+    | '/app/pantry/'
+    | '/app/recipes/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/app/scan' | '/app' | '/app/pantry/$id' | '/app/pantry'
+  to:
+    | '/'
+    | '/app/alerts'
+    | '/app/nutrition'
+    | '/app/scan'
+    | '/app/shopping'
+    | '/app'
+    | '/app/pantry/$id'
+    | '/app/recipes/$id'
+    | '/app/pantry'
+    | '/app/recipes'
   id:
     | '__root__'
     | '/'
     | '/app'
+    | '/app/alerts'
+    | '/app/nutrition'
     | '/app/scan'
+    | '/app/shopping'
     | '/app/'
     | '/app/pantry/$id'
+    | '/app/recipes/$id'
     | '/app/pantry/'
+    | '/app/recipes/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -115,11 +185,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/alerts': {
+      id: '/app/alerts'
+      path: '/alerts'
+      fullPath: '/app/alerts'
+      preLoaderRoute: typeof AppAlertsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/nutrition': {
+      id: '/app/nutrition'
+      path: '/nutrition'
+      fullPath: '/app/nutrition'
+      preLoaderRoute: typeof AppNutritionRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/app/scan': {
       id: '/app/scan'
       path: '/scan'
       fullPath: '/app/scan'
       preLoaderRoute: typeof AppScanRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/shopping': {
+      id: '/app/shopping'
+      path: '/shopping'
+      fullPath: '/app/shopping'
+      preLoaderRoute: typeof AppShoppingRouteImport
       parentRoute: typeof AppRoute
     }
     '/app/pantry/': {
@@ -136,21 +227,45 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppPantryIdRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/recipes/': {
+      id: '/app/recipes/'
+      path: '/recipes'
+      fullPath: '/app/recipes/'
+      preLoaderRoute: typeof AppRecipesIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/recipes/$id': {
+      id: '/app/recipes/$id'
+      path: '/recipes/$id'
+      fullPath: '/app/recipes/$id'
+      preLoaderRoute: typeof AppRecipesIdRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
 interface AppRouteChildren {
+  AppAlertsRoute: typeof AppAlertsRoute
+  AppNutritionRoute: typeof AppNutritionRoute
   AppScanRoute: typeof AppScanRoute
+  AppShoppingRoute: typeof AppShoppingRoute
   AppIndexRoute: typeof AppIndexRoute
   AppPantryIdRoute: typeof AppPantryIdRoute
+  AppRecipesIdRoute: typeof AppRecipesIdRoute
   AppPantryIndexRoute: typeof AppPantryIndexRoute
+  AppRecipesIndexRoute: typeof AppRecipesIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppAlertsRoute: AppAlertsRoute,
+  AppNutritionRoute: AppNutritionRoute,
   AppScanRoute: AppScanRoute,
+  AppShoppingRoute: AppShoppingRoute,
   AppIndexRoute: AppIndexRoute,
   AppPantryIdRoute: AppPantryIdRoute,
+  AppRecipesIdRoute: AppRecipesIdRoute,
   AppPantryIndexRoute: AppPantryIndexRoute,
+  AppRecipesIndexRoute: AppRecipesIndexRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

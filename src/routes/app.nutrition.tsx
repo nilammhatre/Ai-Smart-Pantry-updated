@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AlertTriangle, Sparkles, CheckCircle2 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { usePantry } from "@/lib/pantry-data-hooks";
+import { usePantry } from "@/lib/pantry-store";
 import { PageHeader, Ring } from "@/components/pantry/ui";
 import { cn } from "@/lib/utils";
 
