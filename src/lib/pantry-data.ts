@@ -38,6 +38,18 @@ export interface PantryItem {
   nutrition: Nutrition;
   reminder?: boolean;
   lowStock?: boolean;
+  googleCalendarEventId?: string;
+  calendarEventId?: string;
+  googleCalendarId?: string;
+  calendarSyncStatus?: string;
+  calendarHtmlLink?: string;
+  whatsappMessageId?: string;
+  whatsappStatus?: string;
+  lastAiScanAt?: string;
+  visualScanNotes?: string;
+  consumeByDate?: string;
+  spoilageRisk?: string;
+  storageRecommendation?: string;
 }
 
 export function statusFor(freshness: number, days: number): Status {

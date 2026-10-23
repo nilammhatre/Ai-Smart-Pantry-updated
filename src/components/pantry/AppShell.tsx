@@ -47,12 +47,20 @@ function NavList({ collapsed, onNav }: { collapsed?: boolean; onNav?: () => void
   );
 }
 
+import { useAuth } from "@/lib/auth-store";
+import { UserAuthModal } from "./UserAuthModal";
+import { User } from "lucide-react";
+
 export function AppShell({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [open, setOpen] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
+  const { user } = useAuth();
   const { notifs } = usePantry();
   const unread = notifs.filter((n) => !n.read).length;
   const path = useRouterState({ select: (s) => s.location.pathname });
+
+  const initial = user ? user.name.charAt(0).toUpperCase() : "?";
 
   return (
     <div className="flex min-h-screen bg-background">
@@ -60,15 +68,20 @@ export function AppShell({ children }: { children: ReactNode }) {
         <div className={cn("mb-6 flex items-center gap-2 px-2 pt-2", collapsed && "justify-center px-0")}>
           <Link to="/" className="flex items-center gap-2 font-display text-lg font-bold">
             <span className="grid h-9 w-9 place-items-center rounded-xl bg-brand text-primary-foreground"><Leaf className="h-4 w-4" /></span>
-            {!collapsed && "Smart Pantry"}
+            {!collapsed && "Ai Smart Pantry"}
           </Link>
         </div>
         <div className="no-scrollbar flex-1 overflow-y-auto"><NavList collapsed={collapsed} /></div>
-        {!collapsed && (
+        {!collapsed && user && (
           <div className="mt-4 rounded-2xl bg-brand p-4 text-primary-foreground">
-            <p className="text-xs opacity-80">This month</p>
-            <p className="font-display text-xl font-bold">₹850 saved</p>
-            <p className="mt-1 text-xs opacity-80">12 items rescued</p>
+            <p className="text-xs opacity-80">Active User</p>
+            <p className="font-display text-lg font-bold truncate">{user.name}</p>
+            <button
+              onClick={() => setAuthOpen(true)}
+              className="mt-2 text-xs font-semibold underline underline-offset-2 opacity-90 hover:opacity-100"
+            >
+              Switch Profile
+            </button>
           </div>
         )}
         <button onClick={() => setCollapsed((c) => !c)} className="mt-3 flex items-center justify-center gap-2 rounded-xl py-2 text-xs text-muted-foreground hover:bg-secondary">
@@ -89,18 +102,48 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <Bell className="h-5 w-5" />
                 {unread > 0 && <span className="absolute right-1.5 top-1.5 grid h-4 min-w-4 place-items-center rounded-full bg-spoiled px-1 text-[10px] font-bold text-primary-foreground">{unread}</span>}
               </Link>
-              <Link to="/app/settings" className="grid h-10 w-10 place-items-center rounded-full bg-primary-soft font-display font-bold text-accent-foreground">N</Link>
+
+              <button
+                onClick={() => setAuthOpen(true)}
+                title={user ? `Signed in as ${user.name}` : "Log In / Sign Up"}
+                className="flex items-center gap-2 rounded-full border bg-card px-2.5 py-1 hover:bg-secondary transition-colors"
+              >
+                <span className="grid h-7 w-7 place-items-center rounded-full bg-primary-soft font-display text-xs font-bold text-accent-foreground">
+                  {initial}
+                </span>
+                <span className="hidden text-xs font-medium md:inline max-w-[100px] truncate">
+                  {user ? user.name : "Guest"}
+                </span>
+              </button>
             </div>
           </div>
         </header>
 
-        <main key={path} className="mx-auto w-full max-w-7xl flex-1 px-4 pb-28 pt-8 animate-fade-in sm:px-6 lg:pb-12">{children}</main>
+        <main key={path} className="mx-auto w-full max-w-7xl flex-1 px-4 pb-28 pt-8 animate-fade-in sm:px-6 lg:pb-12">
+          {user ? (
+            children
+          ) : (
+            <div className="mx-auto max-w-md card-surface p-8 text-center space-y-4 my-12 animate-rise">
+              <User className="mx-auto h-12 w-12 text-primary" />
+              <h2 className="text-2xl font-bold font-display">Authentication Required</h2>
+              <p className="text-sm text-muted-foreground">Please log in or select a profile to view your AI Smart Pantry and history.</p>
+              <button
+                onClick={() => setAuthOpen(true)}
+                className="w-full rounded-full bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-soft hover:bg-primary/90"
+              >
+                Log In / Choose Profile
+              </button>
+            </div>
+          )}
+        </main>
       </div>
+
+      <UserAuthModal open={authOpen} onOpenChange={setAuthOpen} />
 
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent side="left" className="w-72 bg-sidebar p-4">
           <SheetTitle className="mb-6 flex items-center gap-2 font-display text-lg">
-            <span className="grid h-9 w-9 place-items-center rounded-xl bg-brand text-primary-foreground"><Leaf className="h-4 w-4" /></span> Smart Pantry
+            <span className="grid h-9 w-9 place-items-center rounded-xl bg-brand text-primary-foreground"><Leaf className="h-4 w-4" /></span> Ai Smart Pantry
           </SheetTitle>
           <NavList onNav={() => setOpen(false)} />
         </SheetContent>

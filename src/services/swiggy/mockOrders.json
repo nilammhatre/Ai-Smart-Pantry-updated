@@ -1,0 +1,100 @@
+{
+  "orders": [
+    {
+      "orderId": "im_order_882910",
+      "createdAt": "2026-08-25T14:30:00Z",
+      "deliveredAt": "2026-08-25T14:48:00Z",
+      "status": "delivered",
+      "totalAmount": 850.50,
+      "items": [
+        {
+          "name": "Fresh Tomato (Hybrid) 500g",
+          "quantity": 1,
+          "category": "Fresh Vegetables",
+          "price": 38.00
+        },
+        {
+          "name": "Fresh Cavendish Banana 1kg",
+          "quantity": 1,
+          "category": "Fresh Fruits",
+          "price": 65.00
+        },
+        {
+          "name": "Amul Taaza Toned Milk 1L",
+          "quantity": 2,
+          "category": "Dairy",
+          "price": 54.00
+        },
+        {
+          "name": "Whole Wheat Bread 400g",
+          "quantity": 1,
+          "category": "Dairy & Bread",
+          "price": 45.00
+        },
+        {
+          "name": "Comfort Fabric Conditioner (Morning Fresh) 860ml",
+          "quantity": 1,
+          "category": "Cleaning & Household",
+          "price": 235.00
+        },
+        {
+          "name": "Haldiram's Bhujia Sev 150g",
+          "quantity": 2,
+          "category": "Snacks & Munchies",
+          "price": 40.00
+        },
+        {
+          "name": "Coca-Cola Zero Sugar Can 330ml",
+          "quantity": 4,
+          "category": "Soft Drinks & Juices",
+          "price": 40.00
+        }
+      ]
+    },
+    {
+      "orderId": "im_order_761205",
+      "createdAt": "2026-08-20T10:15:00Z",
+      "deliveredAt": "2026-08-20T10:35:00Z",
+      "status": "delivered",
+      "totalAmount": 1250.00,
+      "items": [
+        {
+          "name": "Vim Dishwash Gel Lemon 500ml",
+          "quantity": 1,
+          "category": "Cleaning & Household",
+          "price": 115.00
+        },
+        {
+          "name": "Britannia Good Day Cashew Biscuits 200g",
+          "quantity": 3,
+          "category": "Snacks & Munchies",
+          "price": 35.00
+        },
+        {
+          "name": "Fortune Soya Health Refined Soyabean Oil 1L",
+          "quantity": 1,
+          "category": "Atta, Rice & Dals",
+          "price": 145.00
+        },
+        {
+          "name": "Fresh Alphonso Mangoes (Pack of 6)",
+          "quantity": 1,
+          "category": "Fresh Fruits",
+          "price": 499.00
+        },
+        {
+          "name": "Colgate Strong Teeth Toothpaste 100g",
+          "quantity": 1,
+          "category": "Personal Care",
+          "price": 65.00
+        },
+        {
+          "name": "McCain French Fries (Frozen) 450g",
+          "quantity": 1,
+          "category": "Frozen Food",
+          "price": 150.00
+        }
+      ]
+    }
+  ]
+}

@@ -94,25 +94,37 @@ export function FoodThumb({ item, className }: { item: Pick<PantryItem, "image" 
 export function FoodCard({ item, action }: { item: PantryItem; action?: ReactNode }) {
   const status = statusFor(item.freshness, item.expiresInDays);
   return (
-    <div className="card-surface lift group flex flex-col overflow-hidden">
-      <Link to="/app/pantry/$id" params={{ id: item.id }} className="relative block aspect-[4/3] overflow-hidden bg-muted">
-        <FoodThumb item={item} className="h-full w-full transition-transform duration-500 group-hover:scale-105" />
-        <StatusBadge status={status} className="absolute left-3 top-3 glass" />
+    <div className="card-surface lift group flex items-center gap-3.5 p-3 rounded-2xl border transition-all hover:border-primary/40">
+      <Link to="/app/pantry/$id" params={{ id: item.id }} className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-muted shadow-sm">
+        <FoodThumb item={item} className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
       </Link>
-      <div className="flex flex-1 flex-col gap-3 p-4">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <Link to="/app/pantry/$id" params={{ id: item.id }} className="block truncate font-display font-semibold hover:text-primary">{item.name}</Link>
-            <p className="text-xs text-muted-foreground">{item.quantity}</p>
-          </div>
-          <span className={cn("font-display text-lg font-bold", statusTone[status].text)}>{item.freshness}%</span>
+      
+      <div className="min-w-0 flex-1 space-y-1">
+        <div className="flex items-center justify-between gap-1">
+          <Link to="/app/pantry/$id" params={{ id: item.id }} className="truncate font-display text-sm font-semibold hover:text-primary">
+            {item.name}
+          </Link>
+          <StatusBadge status={status} className="px-2 py-0.5 text-[10px] shrink-0" />
         </div>
-        <FreshBar value={item.freshness} status={status} />
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <span className="inline-flex items-center gap-1"><Clock className="h-3.5 w-3.5" />{daysLabel(item.expiresInDays)}</span>
-          <span className="inline-flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{item.storage}</span>
+
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span className="truncate">{item.quantity}</span>
+          <span>·</span>
+          <span className="truncate">{item.storage}</span>
         </div>
-        {action}
+
+        <div className="flex items-center gap-2">
+          <FreshBar value={item.freshness} status={status} className="h-1.5 flex-1" />
+          <span className={cn("text-xs font-bold shrink-0", statusTone[status].text)}>{item.freshness}%</span>
+        </div>
+
+        <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-0.5">
+          <span className="inline-flex items-center gap-1">
+            <Clock className="h-3 w-3 text-primary" />
+            {daysLabel(item.expiresInDays)}
+          </span>
+          {action}
+        </div>
       </div>
     </div>
   );
@@ -144,9 +156,13 @@ export function EmptyState({ title, body, action }: { title: string; body: strin
 
 export function SkeletonCard() {
   return (
-    <div className="card-surface overflow-hidden">
-      <div className="skeleton-shimmer aspect-[4/3]" />
-      <div className="space-y-2 p-4"><div className="skeleton-shimmer h-4 w-2/3 rounded" /><div className="skeleton-shimmer h-3 w-1/3 rounded" /></div>
+    <div className="card-surface flex items-center gap-3.5 p-3 rounded-2xl border">
+      <div className="skeleton-shimmer h-16 w-16 shrink-0 rounded-xl" />
+      <div className="space-y-2 flex-1">
+        <div className="skeleton-shimmer h-4 w-2/3 rounded" />
+        <div className="skeleton-shimmer h-3 w-1/3 rounded" />
+        <div className="skeleton-shimmer h-2 w-full rounded" />
+      </div>
     </div>
   );
 }

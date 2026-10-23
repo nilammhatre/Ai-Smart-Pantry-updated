@@ -116,16 +116,40 @@ function RootShell({ children }: { children: ReactNode }) {
   );
 }
 
+import { swiggyService } from "@/services/swiggy/swiggyService";
+import { toast } from "sonner";
+
+import { AuthProvider } from "@/lib/auth-store";
+
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get("code") || urlParams.get("auth_code");
+    if (code) {
+      swiggyService.handleCallback(code).then(() => {
+        toast.success("Successfully connected to Swiggy Instamart via OAuth 2.1 PKCE!", {
+          description: "Your live Swiggy account is active for order imports and cart synchronization."
+        });
+        const cleanUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, cleanUrl);
+      }).catch((err: any) => {
+        toast.error(`Swiggy OAuth Callback error: ${err.message}`);
+      });
+    }
+  }, []);
 
   return (
     <QueryClientProvider client={queryClient}>
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-      <PantryProvider>
-        <Outlet />
-        <Toaster position="top-center" richColors />
-      </PantryProvider>
+      <AuthProvider>
+        <PantryProvider>
+          <Outlet />
+          <Toaster position="top-center" richColors />
+        </PantryProvider>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }
