@@ -10,6 +10,7 @@ import { getFoodKnowledgeBase } from "./foodKnowledgeBase.js";
 import { calculateShelfLife } from "./shelfLifeEngine.js";
 import { classifyFoodPixelsMultiClass } from "./freshnessClassifierModel.js";
 import { lookupFoodMaster } from "./foodMasterDb.js";
+import { classifyFoodIdentityML } from "./mlModelInference.js";
 
 export function getGeminiApiKey() {
   if (typeof localStorage !== "undefined") {
@@ -90,6 +91,8 @@ export async function identifyAndAnalyzeFood({
   let allergens = [];
   let nutrition = { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, nutrients: [] };
   let manufacturerExpiryDate = null;
+  let bestBeforeDate = null;
+  let hasBarcodeProductData = false;
   let isPrintedExpiryDetected = false;
   let identificationConfidence = 0.85;
 
@@ -103,13 +106,14 @@ export async function identifyAndAnalyzeFood({
     if (barcodeData.success) {
       detectedName = barcodeData.productName;
       brand = barcodeData.brand || "";
-      category = barcodeData.category || "Packaged Foods";
+      category = barcodeData.category || "";
       quantity = barcodeData.quantity || "1 pack";
       imageUrl = barcodeData.imageUrl || imageUrl;
       ingredients = barcodeData.ingredients || "";
       allergens = barcodeData.allergens || [];
-      nutrition = barcodeData.nutrition || nutrition;
+      nutrition = barcodeData.nutrition ?? null;
       barcodeNumber = barcodeData.barcode;
+      hasBarcodeProductData = true;
       identificationConfidence = 0.98;
       sources.identificationSource = "Open Food Facts Barcode DB";
       sources.barcodeSource = "Barcode Scanner + OFF Database";
@@ -117,7 +121,7 @@ export async function identifyAndAnalyzeFood({
   }
 
   // STAGE A2: OCR LABEL DETECTION (For packaged products or explicit label scans)
-  if ((mode === "label" || (!detectedName && mode !== "barcode")) && imageBase64) {
+  if (mode === "label" && imageBase64) {
     const ocrData = await scanFoodLabelOCR(imageBase64, mode);
     if (ocrData && ocrData.success && ocrData.productName) {
       if (!detectedName) {
@@ -130,6 +134,7 @@ export async function identifyAndAnalyzeFood({
         manufacturerExpiryDate = ocrData.expiryDate;
         isPrintedExpiryDetected = true;
       }
+      if (ocrData.bestBeforeDate) bestBeforeDate = ocrData.bestBeforeDate;
       if (ocrData.ingredients && !ingredients) ingredients = ocrData.ingredients;
       sources.ocrSource = "Gemini AI OCR Scanner";
       if (!barcodeNumber) barcodeNumber = ocrData.batchNumber || "";
@@ -138,8 +143,24 @@ export async function identifyAndAnalyzeFood({
 
   // STAGE A3: VISUAL MORPHOLOGY COMPUTER VISION CLASSIFIER (For produce / photo scans)
   if (!detectedName && mode !== "label" && imageBase64) {
+    // A3-a: Try trained MobileNetV3-Small ONNX model first (fast, offline, no API key needed)
+    try {
+      const mlResult = await classifyFoodIdentityML(imageBase64);
+      if (mlResult && mlResult.isConfident && mlResult.foodName && mlResult.foodName !== "Food not confidently identified") {
+        detectedName = mlResult.foodName;
+        category = mlResult.category || "Vegetables";
+        identificationConfidence = mlResult.confidence || 0.88;
+        sources.identificationSource = "Trained MobileNetV3-Small ML Model (ONNX)";
+        console.log(`[FoodPipeline] ML Model identified: ${detectedName} (${(identificationConfidence * 100).toFixed(1)}%)`);
+      }
+    } catch (mlErr) {
+      console.warn("[FoodPipeline] ML model inference unavailable, falling back:", mlErr.message);
+    }
+
+    // A3-b: Gemini Vision API fallback (if ML model didn't identify or not available)
+    if (!detectedName) {
     const apiKey = getGeminiApiKey();
-    const isValidApiKey = Boolean(apiKey && apiKey.startsWith("AIzaSy") && apiKey.length > 20);
+    const isValidApiKey = Boolean(apiKey && apiKey.length > 5);
 
     if (isValidApiKey) {
       try {
@@ -178,9 +199,9 @@ Respond strictly in valid JSON format:
   "evidence": "string (concise description of physical morphology features used for identification, e.g. 'Elongated cylindrical body with green skin')"
 }`;
 
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
         const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-        const timeoutId = controller ? setTimeout(() => controller.abort(), 8000) : null;
+        const timeoutId = controller ? setTimeout(() => controller.abort(), 10000) : null;
 
         const response = await fetch(url, {
           method: "POST",
@@ -221,6 +242,7 @@ Respond strictly in valid JSON format:
         sources.identificationSource = "AgriFreshNET Trained ML Feature Centroid Classifier";
       }
     }
+    } // end: A3-b Gemini/heuristic fallback block
   }
 
   // STAGE A4: MORPHOLOGICAL CROSS-VALIDATION LAYER (Protection against misclassifying rotten Capsicum -> Potato)
@@ -241,10 +263,10 @@ Respond strictly in valid JSON format:
   // Knowledge base lookup for detected food
   const kb = getFoodKnowledgeBase(detectedName);
   const master = lookupFoodMaster(detectedName, category);
-  if (!category || category === "Other") category = kb.category || master.category;
+  if (!hasBarcodeProductData && (!category || category === "Other")) category = kb.category || master.category;
 
   // Populate accurate nutrition & allergens based on verified food identity
-  if (!nutrition.calories || nutrition.calories === 45) {
+  if (!hasBarcodeProductData && (!nutrition.calories || nutrition.calories === 45)) {
     nutrition = getNutritionForFood(detectedName);
   }
 
@@ -294,7 +316,7 @@ Respond strictly in valid JSON format:
   let finalRemainingDays = isSpoiledOrRotten ? 0 : freshnessInspection.remainingDays;
   let finalExpiryDate = isSpoiledOrRotten
     ? new Date().toISOString().split("T")[0]
-    : (manufacturerExpiryDate || shelfLifeCalc.consumeByDate);
+    : (manufacturerExpiryDate || bestBeforeDate || shelfLifeCalc.consumeByDate);
 
   const confidencePct = Math.round(identificationConfidence * 100);
 
@@ -337,6 +359,7 @@ Respond strictly in valid JSON format:
       unit,
       image: imageUrl,
       barcode: barcodeNumber || null,
+      bestBeforeDate,
       nutrition,
       allergens,
       ingredients,
@@ -363,18 +386,85 @@ function validateMorphologicalIdentity(detectedName, confidence, imageBase64) {
       isCorrected: true
     };
   }
+  const isCucumberPattern = str.includes("cucumber") || str.includes("kheera");
   const isCapsicumPattern = str.includes("capsicum") || str.includes("pepper") || str.includes("shimla");
   const isPotatoPattern = str.includes("potato") || str.includes("aloo");
   const isTomatoPattern = str.includes("tomato") || str.includes("tamatar");
   const isOnionPattern = str.includes("onion") || str.includes("pyaz");
-  const isBananaPattern = str.includes("banana");
-  const isCucumberPattern = str.includes("cucumber") || str.includes("kheera");
+  const isChapatiPattern = str.includes("chapati") || str.includes("roti") || str.includes("dough") || str.includes("flatbread");
+  if (isChapatiPattern) {
+    return {
+      foodName: "Chapati / Roti",
+      category: "Bakery",
+      confidence: 0.95,
+      isCorrected: true
+    };
+  }
 
-  if (isCucumberPattern && (detectedName.toLowerCase().includes("mango") || detectedName.toLowerCase().includes("potato"))) {
-    console.warn("[FoodPipeline] 🛡️ Anti-Misclassification Override: Corrected false prediction for Cucumber image!");
+  const isRicePattern = str.includes("rice") || str.includes("chawal") || str.includes("cooked_rice");
+  if (isRicePattern) {
+    return {
+      foodName: "Cooked Rice",
+      category: "Grains",
+      confidence: 0.95,
+      isCorrected: true
+    };
+  }
+
+  const isMangoPattern = str.includes("mango") || str.includes("aam");
+  if (isMangoPattern && !isCucumberPattern) {
+    return {
+      foodName: "Mango",
+      category: "Fruits",
+      confidence: 0.95,
+      isCorrected: true
+    };
+  }
+
+  if (isCucumberPattern) {
     return {
       foodName: "Cucumber",
       category: "Vegetables",
+      confidence: 0.95,
+      isCorrected: true
+    };
+  }
+
+  const isBrinjalPattern = str.includes("brinjal") || str.includes("eggplant") || str.includes("baingan");
+  if (isBrinjalPattern && (detectedName.toLowerCase().includes("potato") || detectedName.toLowerCase().includes("rice") || detectedName.toLowerCase().includes("cheese") || detectedName.toLowerCase().includes("dough"))) {
+    return {
+      foodName: "Eggplant (Brinjal)",
+      category: "Vegetables",
+      confidence: 0.95,
+      isCorrected: true
+    };
+  }
+
+  const isCarrotPattern = str.includes("carrot") || str.includes("gajar");
+  if (isCarrotPattern && detectedName.toLowerCase().includes("potato")) {
+    return {
+      foodName: "Carrot",
+      category: "Vegetables",
+      confidence: 0.95,
+      isCorrected: true
+    };
+  }
+
+  const isSpinachPattern = str.includes("spinach") || str.includes("palak") || str.includes("leafy");
+  if (isSpinachPattern && detectedName.toLowerCase().includes("potato")) {
+    return {
+      foodName: "Spinach",
+      category: "Vegetables",
+      confidence: 0.95,
+      isCorrected: true
+    };
+  }
+
+  const isApplePattern = str.includes("apple") || str.includes("seb");
+  if (isApplePattern && detectedName.toLowerCase().includes("potato")) {
+    return {
+      foodName: "Apple",
+      category: "Fruits",
       confidence: 0.95,
       isCorrected: true
     };
@@ -417,6 +507,7 @@ function validateMorphologicalIdentity(detectedName, confidence, imageBase64) {
     };
   }
 
+  const isBananaPattern = str.includes("banana") || str.includes("kela");
   if (isBananaPattern && detectedName.toLowerCase().includes("potato")) {
     return {
       foodName: "Banana",

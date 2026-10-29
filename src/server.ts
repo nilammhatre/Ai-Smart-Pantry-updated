@@ -2,6 +2,23 @@ import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
+import { handleApiRequest } from "./server/api/router";
+import { getSchedulerInstance } from "./server/services/scheduler";
+import { startSwiggyOAuthBridge } from "./server/services/swiggyBridge";
+
+// Start autonomous persistent background alert scheduler
+try {
+  getSchedulerInstance().start(60000); // Check every 60s
+} catch (err) {
+  console.error("[Server] Could not initialize background scheduler:", err);
+}
+
+// Start Swiggy Builders Club pre-whitelisted OAuth Callback Bridge on port 8000
+try {
+  startSwiggyOAuthBridge("https://localhost:8080");
+} catch (err) {
+  console.warn("[Server] Could not initialize Swiggy OAuth bridge:", err);
+}
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -47,6 +64,11 @@ function isH3SwallowedErrorBody(body: string): boolean {
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
+      const url = new URL(request.url);
+      if (url.pathname.startsWith("/api/")) {
+        return await handleApiRequest(request, env);
+      }
+
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
       return await normalizeCatastrophicSsrResponse(response);

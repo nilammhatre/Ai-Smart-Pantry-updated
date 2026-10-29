@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { usePantry } from "@/lib/pantry-store";
-import { categories, statusFor, daysLabel } from "@/lib/pantry-data";
+import { categories, statusFor, daysLabel, getDeterministicDaysLeft, getExpiryBadge, getExpiryCategory, type ExpiryCategory } from "@/lib/pantry-data";
 import { EmptyState, FoodCard, FoodThumb, FreshBar, PageHeader, StatusBadge } from "@/components/pantry/ui";
 import { cn } from "@/lib/utils";
 import ImportDemoOrder from "@/components/pantry/ImportDemoOrder";
@@ -27,23 +27,34 @@ type Sort = "freshness" | "expiry" | "recent" | "category";
 function Pantry() {
   const { items, syncPantryDb } = usePantry();
   const [cat, setCat] = useState<string>("All");
+  const [expiryFilter, setExpiryFilter] = useState<string>("All");
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<Sort>("expiry");
   const [view, setView] = useState<"grid" | "list">("grid");
   const [showImportModal, setShowImportModal] = useState(false);
 
   const list = useMemo(() => {
-    const f = items.filter((i) => (cat === "All" || i.category === cat) && i.name.toLowerCase().includes(q.toLowerCase()));
-    return [...f].sort((a, b) =>
-      sort === "freshness"
+    const f = items.filter((i) => {
+      const matchCat = cat === "All" || i.category === cat;
+      const matchQ = i.name.toLowerCase().includes(q.toLowerCase());
+      const daysLeft = getDeterministicDaysLeft(i);
+      const category = getExpiryCategory(daysLeft);
+      const matchExpiry = expiryFilter === "All" || category === expiryFilter;
+      return matchCat && matchQ && matchExpiry;
+    });
+
+    return [...f].sort((a, b) => {
+      const daysA = getDeterministicDaysLeft(a);
+      const daysB = getDeterministicDaysLeft(b);
+      return sort === "freshness"
         ? b.freshness - a.freshness
         : sort === "expiry"
-        ? a.expiresInDays - b.expiresInDays
+        ? daysA - daysB
         : sort === "recent"
         ? a.addedDaysAgo - b.addedDaysAgo
-        : a.category.localeCompare(b.category)
-    );
-  }, [items, cat, q, sort]);
+        : a.category.localeCompare(b.category);
+    });
+  }, [items, cat, expiryFilter, q, sort]);
 
   const handleImportSuccess = () => {
     syncPantryDb();
@@ -118,6 +129,38 @@ function Pantry() {
         </div>
       </div>
 
+      {/* Strict Expiry State Filter Tabs */}
+      <div className="no-scrollbar -mx-4 mb-4 flex gap-2 overflow-x-auto px-4 sm:mx-0 sm:flex-wrap sm:px-0">
+        {[
+          { id: "All", label: "All Items", count: items.length },
+          { id: "Expired Items", label: "Expired Items", count: items.filter((i) => getDeterministicDaysLeft(i) < 0).length },
+          { id: "Expiring Today", label: "Expiring Today", count: items.filter((i) => getDeterministicDaysLeft(i) === 0).length },
+          { id: "Expiring in 1–3 Days", label: "Expiring in 1–3 Days", count: items.filter((i) => { const dl = getDeterministicDaysLeft(i); return dl >= 1 && dl <= 3; }).length },
+          { id: "Fresh Stock", label: "Fresh Stock", count: items.filter((i) => getDeterministicDaysLeft(i) > 3).length },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setExpiryFilter(tab.id)}
+            className={cn(
+              "inline-flex shrink-0 items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-semibold transition-colors",
+              expiryFilter === tab.id
+                ? "border-primary bg-primary text-primary-foreground shadow-sm"
+                : "bg-card hover:bg-secondary text-muted-foreground"
+            )}
+          >
+            <span>{tab.label}</span>
+            <span
+              className={cn(
+                "rounded-full px-1.5 py-0.2 text-[10px] font-bold",
+                expiryFilter === tab.id ? "bg-primary-foreground/20 text-primary-foreground" : "bg-muted text-muted-foreground"
+              )}
+            >
+              {tab.count}
+            </span>
+          </button>
+        ))}
+      </div>
+
       <div className="no-scrollbar -mx-4 mb-8 flex gap-2 overflow-x-auto px-4 sm:mx-0 sm:flex-wrap sm:px-0">
         {["All", ...categories].map((c) => (
           <button
@@ -152,7 +195,7 @@ function Pantry() {
             }
           />
         ) : (
-          <EmptyState title="Nothing matches." body="Try a different search or category." />
+          <EmptyState title="Nothing matches." body="Try a different search, category, or expiry filter." />
         )
       ) : view === "grid" ? (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -165,7 +208,9 @@ function Pantry() {
       ) : (
         <div className="card-surface divide-y overflow-hidden rounded-2xl border">
           {list.map((i) => {
-            const s = statusFor(i.freshness, i.expiresInDays);
+            const daysLeft = getDeterministicDaysLeft(i);
+            const expiryBadge = getExpiryBadge(daysLeft);
+            const s = statusFor(i.freshness, daysLeft);
             return (
               <div key={i.id} className="flex items-center gap-4 p-3 hover:bg-secondary/60">
                 <Link to="/app/pantry/$id" params={{ id: i.id }} className="flex items-center gap-3 min-w-0 flex-1">
@@ -178,11 +223,15 @@ function Pantry() {
                   </div>
                 </Link>
 
+                <span className={cn("px-2 py-0.5 text-[10px] font-bold rounded-md shrink-0 border", expiryBadge.badgeClass)}>
+                  {expiryBadge.text}
+                </span>
+
                 <div className="hidden w-28 sm:block">
                   <FreshBar value={i.freshness} status={s} />
                 </div>
-                <span className="hidden w-24 text-right text-xs text-muted-foreground md:block">
-                  {daysLabel(i.expiresInDays)}
+                <span className="hidden w-28 text-right text-xs text-muted-foreground md:block">
+                  {daysLabel(daysLeft)}
                 </span>
                 <StatusBadge status={s} />
               </div>

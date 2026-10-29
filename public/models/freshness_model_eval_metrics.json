@@ -1,0 +1,86 @@
+{
+  "model_type": "freshness_spoilage",
+  "test_samples_count": 94,
+  "overall_accuracy": 0.9149,
+  "macro_f1_score": 0.913,
+  "per_class_metrics": {
+    "fresh": {
+      "precision": 0.8621,
+      "recall": 1.0,
+      "f1_score": 0.9259,
+      "support": 50
+    },
+    "spoiled": {
+      "precision": 1.0,
+      "recall": 0.8182,
+      "f1_score": 0.9,
+      "support": 44
+    }
+  },
+  "confusion_matrix": [
+    [
+      50,
+      0
+    ],
+    [
+      8,
+      36
+    ]
+  ],
+  "class_names": [
+    "fresh",
+    "spoiled"
+  ],
+  "targeted_confusion_checks": {},
+  "training_duration_seconds": 91.27,
+  "training_history": {
+    "train_loss": [
+      0.3925,
+      0.2677,
+      0.3382,
+      0.2798,
+      0.3369,
+      0.29,
+      0.2702,
+      0.1188,
+      0.2074,
+      0.1472
+    ],
+    "train_acc": [
+      0.8443,
+      0.8689,
+      0.8648,
+      0.873,
+      0.8648,
+      0.918,
+      0.9016,
+      0.9549,
+      0.9385,
+      0.9713
+    ],
+    "val_loss": [
+      0.4794,
+      0.3815,
+      0.2165,
+      0.1733,
+      0.3862,
+      0.276,
+      0.2121,
+      0.136,
+      0.2104,
+      0.3334
+    ],
+    "val_acc": [
+      0.8689,
+      0.8852,
+      0.9508,
+      0.9344,
+      0.8525,
+      0.9016,
+      0.9836,
+      0.9836,
+      0.918,
+      0.8852
+    ]
+  }
+}

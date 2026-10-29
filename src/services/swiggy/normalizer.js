@@ -33,6 +33,14 @@ const NON_FOOD_CATEGORIES = [
   "pharmacy"
 ];
 
+const NON_FOOD_KEYWORDS = [
+  "detergent", "soap", "toothpaste", "conditioner", "fabric", "harpic", "shampoo",
+  "cleaner", "colgate", "vim", "comfort", "tissue", "scrub", "dettol", "mosquito",
+  "spray", "battery", "batteries", "dishwash", "sanitizer", "lotion", "body wash",
+  "face wash", "sponge", "garbage bag", "trash bag", "aluminium foil", "foil", "phenyl",
+  "mop", "broom", "toothbrush", "diaper", "napkin", "sanitary", "bleach", "wipe", "wipes"
+];
+
 /**
  * Extracts quantity and unit from product name.
  * E.g. "Amul Fresh Cream 250ml" -> { name: "Amul Fresh Cream", packageSize: 250, unit: "mL" }
@@ -87,11 +95,12 @@ export function normalizeSwiggyItem(item) {
     mappedCategory = "Bakery";
   }
 
-  // Detect non-food items
+  // Detect non-food items by category or item name keywords
+  const cleanLower = cleanName.toLowerCase();
   const isNonFood = NON_FOOD_CATEGORIES.some(cat => 
     rawCategory.toLowerCase().includes(cat) || 
     (item.category_group && item.category_group.toLowerCase().includes(cat))
-  );
+  ) || NON_FOOD_KEYWORDS.some(kw => new RegExp(`\\b${kw}\\b`, "i").test(cleanLower));
   
   const isFood = !isNonFood;
 

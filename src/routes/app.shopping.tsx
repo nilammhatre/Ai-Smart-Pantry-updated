@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Plus, Sparkles, ShoppingBag, Zap, Download, Share2, User, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -35,6 +35,37 @@ function Shopping() {
   const [showImportModal, setShowImportModal] = useState(false);
   const [showSwiggyModal, setShowSwiggyModal] = useState(false);
   const [swiggyDefaultTab, setSwiggyDefaultTab] = useState<"cart" | "login" | "history" | "tracking">("cart");
+
+  // Handle OAuth 2.1 callback redirect from official Swiggy Builders Club
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    const error = params.get("error");
+    const errorDesc = params.get("error_description");
+
+    if (error) {
+      toast.error(`Swiggy OAuth Error: ${errorDesc || error}`);
+      window.history.replaceState({}, document.title, window.location.pathname);
+      return;
+    }
+
+    if (code) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+      const toastId = toast.loading("Exchanging Swiggy PKCE authorization code...");
+      swiggyService.setMode("real");
+      swiggyService
+        .handleCallback(code)
+        .then(() => {
+          toast.success("Genuine Swiggy Instamart account connected!", { id: toastId });
+          setShowSwiggyModal(true);
+          setSwiggyDefaultTab("history");
+        })
+        .catch((err) => {
+          toast.error(`Swiggy token exchange failed: ${err.message}`, { id: toastId });
+        });
+    }
+  }, []);
 
   const open = shopping.filter((s) => !s.done && s.section !== "Recently Purchased");
   const isSwiggyConnected = swiggyService.isConnected();
@@ -166,7 +197,7 @@ function Shopping() {
             </div>
             <h3 className="mt-3 text-2xl font-black tracking-tight">Order from Swiggy Instamart</h3>
             <p className="mt-1 text-sm opacity-90">
-              {open.length} items · est. ₹{open.reduce((acc, item) => acc + (item.price || 45), 0) || open.length * 45} · 15 min
+              {open.length} items · est. ₹{open.reduce((acc, item: any) => acc + (item.price || 45), 0) || open.length * 45} · 15 min
             </p>
             <Button
               variant="outline"

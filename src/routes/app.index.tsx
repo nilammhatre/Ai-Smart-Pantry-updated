@@ -25,18 +25,22 @@ function Dashboard() {
   const { items, history, addShop, removeItem, syncPantryDb } = usePantry();
   const analytics = calculateAnalytics(items, history);
 
-  const counts: Record<Status, number> = { Fresh: 0, Good: 0, "Use Soon": 0, Spoiled: 0 };
+  const counts: Record<Status, number> = { Fresh: 0, Good: 0, "Use Soon": 0, Expired: 0, Spoiled: 0 };
   items.forEach((i) => counts[statusFor(i.freshness, i.expiresInDays)]++);
-  const expiring = items.filter((i) => i.expiresInDays >= 0 && i.expiresInDays <= 3).sort((a, b) => a.expiresInDays - b.expiresInDays);
-  const spoiledItems = items.filter((i) => i.expiresInDays < 0 || i.freshness <= 25);
+
+  const criticalItems = items.filter((i) => i.hasCriticalSpoilage || i.spoilageStatus === "SPOILED");
+  const expiring = items.filter((i) => !i.hasCriticalSpoilage && i.expiresInDays >= 0 && i.expiresInDays <= 3).sort((a, b) => a.expiresInDays - b.expiresInDays);
+  const overdueItems = items.filter((i) => !i.hasCriticalSpoilage && i.expiresInDays < 0);
   const lowStockItems = items.filter((i) => i.lowStock || i.expiresInDays <= 1);
   const counterItems = items.filter((i) => i.storage === "Counter" || i.storage === "Pantry shelf");
 
+  const isAllClear = criticalItems.length === 0 && expiring.length === 0 && overdueItems.length === 0 && items.length > 0;
+
   const stats = [
     { label: "Total items", v: analytics.totalItems, icon: Boxes, tone: "bg-primary-soft text-primary" },
-    { label: "Fresh", v: analytics.freshCount + analytics.goodCount, icon: Leaf, tone: "bg-fresh-soft text-fresh" },
-    { label: "Expiring soon", v: analytics.expiringSoonCount, icon: AlarmClock, tone: "bg-warn-soft text-warn" },
-    { label: "Expired", v: analytics.expiredCount, icon: XCircle, tone: "bg-spoiled-soft text-spoiled" },
+    { label: "Critical Spoilage", v: criticalItems.length, icon: XCircle, tone: "bg-spoiled-soft text-spoiled" },
+    { label: "Expiring soon", v: expiring.length, icon: AlarmClock, tone: "bg-warn-soft text-warn" },
+    { label: "Overdue / Expired", v: overdueItems.length, icon: XCircle, tone: "bg-spoiled-soft text-spoiled" },
     { label: "Food saved", v: analytics.foodSavedCount, suffix: " items", icon: PackageCheck, tone: "bg-primary-soft text-primary" },
     { label: "Money saved", v: analytics.moneySavedINR, prefix: "₹", icon: IndianRupee, tone: "bg-good-soft text-good" },
     { label: "Waste reduced", v: analytics.wasteReductionPercent, suffix: "%", icon: Recycle, tone: "bg-fresh-soft text-fresh" },
@@ -47,17 +51,17 @@ function Dashboard() {
     icon: any;
     text: string;
     sub: string;
-    to?: "/app/recipes" | "/app/pantry" | "/app/shopping";
+    to?: "/app/recipes" | "/app/pantry" | "/app/shopping" | "/app/alerts";
     onClick?: () => void;
   }> = [];
 
-  // Action 1: Remove Spoiled Items
-  if (spoiledItems.length > 0) {
-    const item = spoiledItems[0];
+  // Action 1: Remove Critical Spoiled Items
+  if (criticalItems.length > 0) {
+    const item = criticalItems[0];
     dynamicActions.push({
       icon: XCircle,
-      text: `Remove spoiled ${item.name}`,
-      sub: "Spoiled/expired · discard to keep pantry clean",
+      text: `Critical: Dispose of ${item.name}`,
+      sub: "Severe mold or rot detected · discard immediately",
       onClick: async () => {
         await removeItem(item.id);
         toast.success(`Removed spoiled ${item.name} from pantry.`);
@@ -71,7 +75,7 @@ function Dashboard() {
     dynamicActions.push({
       icon: Salad,
       text: `Cook ${item.name} today`,
-      sub: `${item.expiresInDays} day(s) left · view zero-waste AI recipes`,
+      sub: `${item.expiresInDays} day(s) left · next alert scheduled`,
       to: "/app/recipes"
     });
   }
@@ -91,8 +95,16 @@ function Dashboard() {
     });
   }
 
-  // Action 4: Restock Low Stock Items
-  const lowItem = lowStockItems[0] || items[0];
+  // Action 4: Alert Channels & Timing Configuration
+  dynamicActions.push({
+    icon: AlarmClock,
+    text: "Configure Reminder Rules & Channels",
+    sub: "Manage Google Calendar, WhatsApp & timing rules",
+    to: "/app/alerts"
+  });
+
+  // Action 5: Restock Low Stock Items
+  const lowItem = lowStockItems[0];
   if (lowItem) {
     dynamicActions.push({
       icon: ShoppingCart,
@@ -105,16 +117,6 @@ function Dashboard() {
     });
   }
 
-  // Fallback if pantry is empty
-  if (dynamicActions.length === 0) {
-    dynamicActions.push({
-      icon: ScanLine,
-      text: "Scan your first food item",
-      sub: "Use AI freshness vision to populate your pantry",
-      to: "/app/scan" as any
-    });
-  }
-
   const userName = user ? user.name.split(" ")[0] : "Chef";
 
   return (
@@ -124,8 +126,21 @@ function Dashboard() {
           <h1 className="text-3xl font-bold sm:text-4xl">{greeting()}, {userName}.</h1>
           <p className="mt-2 text-muted-foreground">Here's what needs your attention today.</p>
         </div>
-        <Button asChild variant="hero" size="lg"><Link to="/app/scan"><ScanLine /> Scan food</Link></Button>
+        <div className="flex gap-2">
+          <Button asChild variant="outline"><Link to="/app/alerts"><AlarmClock /> Alerts Engine</Link></Button>
+          <Button asChild variant="hero" size="lg"><Link to="/app/scan"><ScanLine /> Scan food</Link></Button>
+        </div>
       </div>
+
+      {isAllClear && (
+        <div className="flex items-center gap-4 rounded-3xl bg-fresh-soft p-5 text-fresh border border-fresh/30 animate-rise">
+          <PackageCheck className="h-8 w-8 shrink-0" />
+          <div>
+            <h3 className="font-display font-bold text-lg">All Clear — No Spoilage or Overdue Items!</h3>
+            <p className="text-sm opacity-90">All pantry items have plenty of shelf life remaining. Next reminders will trigger automatically.</p>
+          </div>
+        </div>
+      )}
 
       <div className="no-scrollbar -mx-4 flex snap-x gap-3 overflow-x-auto px-4 sm:mx-0 sm:grid sm:grid-cols-4 sm:px-0 2xl:grid-cols-7">
         {stats.map((s, i) => (
@@ -140,7 +155,7 @@ function Dashboard() {
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="card-surface p-6 lg:col-span-2 animate-rise">
           <div className="flex items-center justify-between">
-            <h2 className="text-xl font-semibold">Food Freshness Overview</h2>
+            <h2 className="text-xl font-semibold">Food Freshness & Status Overview</h2>
             <Link to="/app/pantry" className="text-sm font-medium text-primary hover:underline">View pantry</Link>
           </div>
           <div className="mt-6 grid grid-cols-2 gap-6 sm:grid-cols-4">
@@ -171,10 +186,20 @@ function Dashboard() {
         </div>
       </div>
 
-      <Section title="Expiring soon" action={<Link to="/app/alerts" className="text-sm font-medium text-primary hover:underline">All alerts</Link>}>
+      {criticalItems.length > 0 && (
+        <Section title="🚨 Critical Safety Alerts" action={<Link to="/app/alerts" className="text-sm font-medium text-spoiled hover:underline">Manage alerts</Link>}>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {criticalItems.map((i) => (
+              <FoodCard key={i.id} item={i} action={<Button size="sm" variant="destructive" className="mt-1" onClick={() => removeItem(i.id)}>Discard</Button>} />
+            ))}
+          </div>
+        </Section>
+      )}
+
+      <Section title="Expiring soon (Next Alerts Scheduled)" action={<Link to="/app/alerts" className="text-sm font-medium text-primary hover:underline">All alerts</Link>}>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {expiring.slice(0, 4).map((i) => (
-            <FoodCard key={i.id} item={i} action={<Button asChild size="sm" variant="soft" className="mt-1"><Link to="/app/recipes">Use in a recipe</Link></Button>} />
+            <FoodCard key={i.id} item={i} action={<Button asChild size="sm" variant="soft" className="mt-1"><Link to="/app/recipes">Cook today</Link></Button>} />
           ))}
         </div>
       </Section>

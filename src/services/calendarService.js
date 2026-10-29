@@ -19,9 +19,39 @@ const inFlightRequests = new Map();
  */
 export function get1DayBeforeDate(dateStr) {
   if (!dateStr) return new Date().toISOString().split("T")[0];
-  const d = new Date(dateStr + "T00:00:00");
-  d.setDate(d.getDate() - 1);
-  return d.toISOString().split("T")[0];
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() - 1);
+  return dt.toISOString().split("T")[0];
+}
+
+/**
+ * Calculates date string 1 day after the provided date string (YYYY-MM-DD).
+ * Used for exclusive all-day event end dates according to Google Calendar API specification.
+ * @param {string} dateStr 
+ * @returns {string} Date string 1 day after
+ */
+export function getNextDayDate(dateStr) {
+  if (!dateStr) return new Date().toISOString().split("T")[0];
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + 1);
+  return dt.toISOString().split("T")[0];
+}
+
+/**
+ * Normalizes a food product name to compare against calendar event summaries.
+ * Removes quantity units, common noise adjectives, and special characters.
+ * @param {string} name 
+ * @returns {string}
+ */
+export function normalizeFoodName(name) {
+  if (!name) return "";
+  return String(name)
+    .toLowerCase()
+    .replace(/\b(fresh|organic|raw|ripe|pack|packet|bottle|pcs|piece|pieces|kg|gm|g|ml|l|toned|pure)\b/gi, "")
+    .replace(/[^\w\s]/g, "")
+    .trim();
 }
 
 /**
@@ -109,9 +139,9 @@ export async function refreshGoogleAccessToken() {
  */
 async function getValidAccessToken(customToken = null) {
   if (customToken) return customToken;
-  let token = await refreshGoogleAccessToken();
+  let token = getStoredGoogleAccessToken();
   if (!token) {
-    token = getStoredGoogleAccessToken();
+    token = await refreshGoogleAccessToken();
   }
   return token;
 }
@@ -223,11 +253,13 @@ export function buildEventPayload(item, eventType = "soon") {
     summary,
     description,
     start: { date: eventDate },
-    end: { date: eventDate },
+    end: { date: getNextDayDate(eventDate) },
     extendedProperties: {
       private: {
         source: "SmartPantry",
-        pantryItemId: String(item.id),
+        pantryItemId: String(item.id || ""),
+        foodName: String(item.name || "").trim().toLowerCase(),
+        eventDate: eventDate,
         eventType: eventType
       }
     },
@@ -243,50 +275,30 @@ export function buildEventPayload(item, eventType = "soon") {
 /**
  * Queries Google Calendar API to check if an event for the pantry item or product name + date already exists on Google Calendar.
  * Ensures an event is NEVER repeated on the same day for the same product.
+ * If multiple duplicates already exist on the calendar from prior runs, cleans them up and retains only one.
  * 
  * @param {object} item 
  * @param {string} accessToken 
  * @param {string} [eventType="expired"] - "soon" | "expired"
+ * @param {string|null} [explicitDate=null] - Optional override target date string (YYYY-MM-DD)
  * @returns {Promise<object|null>} Existing remote event object or null
  */
-export async function findExistingRemoteCalendarEvent(item, accessToken, eventType = "expired") {
+export async function findExistingRemoteCalendarEvent(item, accessToken, eventType = "expired", explicitDate = null) {
   if (!item || !accessToken) return null;
   const calendarId = item.googleCalendarId || "primary";
   const todayStr = new Date().toISOString().split("T")[0];
   const expiryDateStr = item.consumeByDate || item.expiryDate || todayStr;
-  const eventDateStr = eventType === "soon" ? get1DayBeforeDate(expiryDateStr) : expiryDateStr;
+  const eventDateStr = explicitDate || (eventType === "soon" ? get1DayBeforeDate(expiryDateStr) : expiryDateStr);
 
   try {
-    // 1. Query extendedProperties private property pantryItemId first
-    if (item.id) {
-      const propUrl = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?privateExtendedProperty=${encodeURIComponent(`pantryItemId=${item.id}`)}`;
-      const propRes = await fetch(propUrl, {
-        headers: { "Authorization": `Bearer ${accessToken}` }
-      });
+    // Query a 3-day window around eventDateStr to handle timezone offsets (e.g. UTC+5:30)
+    const prevDay = get1DayBeforeDate(eventDateStr);
+    const nextDay = getNextDayDate(eventDateStr);
+    const timeMin = `${prevDay}T00:00:00Z`;
+    const timeMax = `${nextDay}T23:59:59Z`;
 
-      if (propRes.ok) {
-        const propData = await propRes.json();
-        if (propData.items && propData.items.length > 0) {
-          const activeMatch = propData.items.find(e => {
-            if (e.status === "cancelled") return false;
-            const privateProp = e.extendedProperties?.private || {};
-            if (privateProp.eventType) {
-              return privateProp.eventType === eventType;
-            }
-            return true;
-          });
-          if (activeMatch) {
-            console.log(`[GoogleCalendarAPI] Found existing remote event by pantryItemId for "${item.name}" (${eventType}: ID ${activeMatch.id})`);
-            return activeMatch;
-          }
-        }
-      }
-    }
-
-    // 2. Query search term (product name) on the specific date range (same day)
-    const timeMin = `${eventDateStr}T00:00:00Z`;
-    const timeMax = `${eventDateStr}T23:59:59Z`;
-    const searchUrl = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?q=${encodeURIComponent(item.name)}&timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&singleEvents=true`;
+    // Query events in window
+    const searchUrl = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&singleEvents=true&maxResults=50`;
     
     const searchRes = await fetch(searchUrl, {
       headers: { "Authorization": `Bearer ${accessToken}` }
@@ -295,16 +307,63 @@ export async function findExistingRemoteCalendarEvent(item, accessToken, eventTy
     if (searchRes.ok) {
       const searchData = await searchRes.json();
       if (searchData.items && searchData.items.length > 0) {
-        const match = searchData.items.find(e => {
+        const rawItemName = (item.name || "").toLowerCase().trim();
+        const normItemName = normalizeFoodName(item.name);
+        const itemIdStr = item.id ? String(item.id) : null;
+
+        const matchingEvents = searchData.items.filter(e => {
           if (e.status === "cancelled") return false;
-          const s = (e.summary || "").toLowerCase();
-          const n = (item.name || "").toLowerCase().trim();
-          return s.includes(n);
+
+          // 1. Verify date match (all-day event e.start.date, or dateTime date)
+          const eStartDate = e.start?.date || (e.start?.dateTime ? e.start.dateTime.split("T")[0] : null);
+          let dateMatches = (eStartDate === eventDateStr);
+          if (!dateMatches && e.start?.dateTime) {
+            // Check local date representation as well
+            try {
+              const d = new Date(e.start.dateTime);
+              const localIso = d.toISOString().split("T")[0];
+              dateMatches = (localIso === eventDateStr);
+            } catch {}
+          }
+          if (!dateMatches) return false;
+
+          // 2. Check pantryItemId or foodId property
+          const priv = e.extendedProperties?.private || {};
+          if (itemIdStr && (priv.pantryItemId === itemIdStr || priv.foodId === itemIdStr)) {
+            return true;
+          }
+
+          // 3. Check exact/normalized product name in summary or description
+          const summary = (e.summary || "").toLowerCase();
+          const description = (e.description || "").toLowerCase();
+
+          if (rawItemName && (summary.includes(rawItemName) || description.includes(rawItemName))) {
+            return true;
+          }
+
+          if (normItemName && normItemName.length >= 3) {
+            const normSummary = normalizeFoodName(summary);
+            if (summary.includes(normItemName) || normSummary.includes(normItemName)) {
+              return true;
+            }
+          }
+
+          return false;
         });
 
-        if (match) {
-          console.log(`[GoogleCalendarAPI] Found existing remote event on ${eventDateStr} for "${item.name}" (ID: ${match.id}). Preventing duplicate creation.`);
-          return match;
+        if (matchingEvents.length > 0) {
+          const primaryMatch = matchingEvents[0];
+          console.log(`[GoogleCalendarAPI] 🛡️ Found existing event on ${eventDateStr} for "${item.name}" (ID: ${primaryMatch.id}). Duplicate creation prevented.`);
+
+          // If repeated duplicate events already exist on this same date, clean up the extras!
+          if (matchingEvents.length > 1) {
+            for (let i = 1; i < matchingEvents.length; i++) {
+              console.log(`[GoogleCalendarAPI] 🧹 Removing redundant duplicate event ${matchingEvents[i].id} for "${item.name}" on ${eventDateStr}...`);
+              deleteSingleEvent(matchingEvents[i].id, calendarId, accessToken).catch(() => {});
+            }
+          }
+
+          return primaryMatch;
         }
       }
     }
@@ -317,28 +376,45 @@ export async function findExistingRemoteCalendarEvent(item, accessToken, eventTy
 
 /**
  * Internal helper to create or patch a single event (soon or expired).
+ * Guaranteed to never create repeated events on the same day for the same item.
  */
 async function createSingleCalendarEvent(item, eventType, accessToken, calendarId) {
-  const remoteMatch = await findExistingRemoteCalendarEvent(item, accessToken, eventType);
+  const todayStr = new Date().toISOString().split("T")[0];
+  const expiryDate = item.consumeByDate || item.expiryDate || todayStr;
+  const eventDate = eventType === "soon" ? get1DayBeforeDate(expiryDate) : expiryDate;
+
+  // Never schedule past reminders
+  if (eventType === "soon" && eventDate < todayStr) {
+    console.log(`[GoogleCalendarAPI] ⏩ Skipping past "soon" reminder (${eventDate}) for "${item.name}".`);
+    return { success: true, skipped: true, reason: "Date in past" };
+  }
+
+  const remoteMatch = await findExistingRemoteCalendarEvent(item, accessToken, eventType, eventDate);
   if (remoteMatch) {
-    console.log(`[GoogleCalendarAPI] Existing remote event (${remoteMatch.id}) found on Google Calendar for "${item.name}" (${eventType}). Patching existing event...`);
+    console.log(`[GoogleCalendarAPI] 🛡️ Existing event (${remoteMatch.id}) found on Google Calendar for "${item.name}" on ${eventDate}. Updating existing event without repeating...`);
     const payload = buildEventPayload(item, eventType);
-    const patchRes = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(remoteMatch.id)}`, {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${accessToken}`
-      },
-      body: JSON.stringify(payload)
-    });
-    if (patchRes.ok) {
-      const patchData = await patchRes.json();
-      return { success: true, eventId: patchData.id, htmlLink: patchData.htmlLink };
+    try {
+      const patchRes = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(remoteMatch.id)}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${accessToken}`
+        },
+        body: JSON.stringify(payload)
+      });
+      if (patchRes.ok) {
+        const patchData = await patchRes.json();
+        return { success: true, eventId: patchData.id, htmlLink: patchData.htmlLink, alreadyExisted: true };
+      }
+    } catch (e) {
+      console.warn("[GoogleCalendarAPI] Patch of existing event encountered issue, retaining existing ID:", e);
     }
+    // Return existing event ID to avoid duplicate creation
+    return { success: true, eventId: remoteMatch.id, htmlLink: remoteMatch.htmlLink, alreadyExisted: true };
   }
 
   const payload = buildEventPayload(item, eventType);
-  console.log(`[GoogleCalendarAPI] 📅 Creating Google Calendar event (${eventType}) for "${item.name}"...`);
+  console.log(`[GoogleCalendarAPI] 📅 Creating new Google Calendar event (${eventType}) for "${item.name}" on ${eventDate}...`);
   const response = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`, {
     method: "POST",
     headers: {
@@ -366,9 +442,10 @@ async function createSingleCalendarEvent(item, eventType, accessToken, calendarI
 }
 
 /**
- * 1. CREATE EVENT: Creates TWO Google Calendar events for a pantry item:
- *    - 1 Day Before Expiry Event (Expiring Soon)
+ * 1. CREATE EVENT: Creates Google Calendar events for a pantry item without duplicates:
+ *    - 1 Day Before Expiry Event (Expiring Soon - only if different date from expiry and not in past)
  *    - Date of Expiry Event (EXPIRED)
+ *    - Ensures NO repeated events are created about the same item on the same date.
  * 
  * @param {object} item 
  * @param {string} [customToken] 
@@ -404,8 +481,15 @@ export async function createCalendarEvent(item, customToken = null) {
     const calendarId = item.googleCalendarId || "primary";
 
     try {
-      // 1. Create 1 Day Before Expiry Event ("soon")
-      const soonRes = await createSingleCalendarEvent(item, "soon", accessToken, calendarId);
+      const soonDateStr = get1DayBeforeDate(expiryDateStr);
+
+      // 1. Create 1 Day Before Expiry Event ("soon") ONLY if it's on a different date from expiry and not in the past
+      let soonRes = { success: true, skipped: true };
+      if (soonDateStr !== expiryDateStr && soonDateStr >= todayStr) {
+        soonRes = await createSingleCalendarEvent(item, "soon", accessToken, calendarId);
+      } else {
+        console.log(`[GoogleCalendarAPI] 🛡️ Skipping "soon" event for "${item.name}" (soonDate=${soonDateStr}, expiryDate=${expiryDateStr}) to prevent repeated events on the same date.`);
+      }
 
       // 2. Create Date of Expiry Event ("expired")
       const expiredRes = await createSingleCalendarEvent(item, "expired", accessToken, calendarId);
@@ -413,7 +497,7 @@ export async function createCalendarEvent(item, customToken = null) {
       if (soonRes.success || expiredRes.success) {
         const primaryEventId = expiredRes.eventId || soonRes.eventId;
         const htmlLink = expiredRes.htmlLink || soonRes.htmlLink;
-        console.log(`[GoogleCalendarAPI] ✅ Dual events created successfully for "${item.name}"! (Soon ID: ${soonRes.eventId || 'N/A'}, Expired ID: ${expiredRes.eventId || 'N/A'})`);
+        console.log(`[GoogleCalendarAPI] ✅ Calendar events synchronized without duplicates for "${item.name}"! (Soon ID: ${soonRes.eventId || 'skipped'}, Expired ID: ${expiredRes.eventId || 'N/A'})`);
         return {
           success: true,
           googleCalendarSoonEventId: soonRes.eventId || null,

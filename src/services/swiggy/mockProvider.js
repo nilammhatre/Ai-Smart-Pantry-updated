@@ -7,6 +7,7 @@ const ORDERS_KEY = "swiggy_mock_orders_history";
 
 function getStoredMockOrders() {
   try {
+    if (typeof localStorage === "undefined") return mockData.orders;
     const raw = localStorage.getItem(ORDERS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
@@ -22,6 +23,7 @@ function getStoredMockOrders() {
 
 function saveStoredMockOrders(orders) {
   try {
+    if (typeof localStorage === "undefined") return;
     localStorage.setItem(ORDERS_KEY, JSON.stringify(orders));
   } catch (e) {
     console.error("[Mock Swiggy] Error saving orders to localStorage:", e);
@@ -31,6 +33,7 @@ function saveStoredMockOrders(orders) {
 export const mockSwiggyProvider = {
   // Check if user is connected
   isConnected() {
+    if (typeof localStorage === "undefined") return false;
     return !!localStorage.getItem(TOKEN_KEY);
   },
 
@@ -39,7 +42,9 @@ export const mockSwiggyProvider = {
     console.log("[Mock Swiggy] Simulating OAuth authorization redirect...");
     return new Promise((resolve) => {
       setTimeout(() => {
-        localStorage.setItem(TOKEN_KEY, "mock_token_xyz_12345");
+        if (typeof localStorage !== "undefined") {
+          localStorage.setItem(TOKEN_KEY, "mock_token_xyz_12345");
+        }
         console.log("[Mock Swiggy] OAuth login successful. Mock token set.");
         resolve(true);
       }, 600); // Small delay to feel premium/alive
@@ -49,13 +54,17 @@ export const mockSwiggyProvider = {
   // Simulates OAuth callback code exchange
   async handleCallback(authCode) {
     console.log("[Mock Swiggy] OAuth callback code received:", authCode);
-    localStorage.setItem(TOKEN_KEY, "mock_token_xyz_12345");
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(TOKEN_KEY, "mock_token_xyz_12345");
+    }
     return true;
   },
 
   // Simulates logout
   async logout() {
-    localStorage.removeItem(TOKEN_KEY);
+    if (typeof localStorage !== "undefined") {
+      localStorage.removeItem(TOKEN_KEY);
+    }
     console.log("[Mock Swiggy] Session cleared.");
     return true;
   },

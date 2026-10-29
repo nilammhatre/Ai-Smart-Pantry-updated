@@ -5,10 +5,12 @@ import {
 } from "../../services/instacart/instacartDemoData";
 import { swiggyService } from "../../services/swiggy/swiggyService";
 import { pantryDb } from "../../services/swiggy/pantryDb";
+import { usePantry } from "../../lib/pantry-store";
 import { createCalendarEvent } from "../../services/calendarService";
 import { sendWhatsAppAlert } from "../../services/whatsappService";
 
 function ImportDemoOrder({ onImportSuccess }) {
+  const { addItems, syncPantryDb } = usePantry();
   const [activeTab, setActiveTab] = useState("swiggy"); // 'swiggy' | 'instacart'
   
   // Swiggy State
@@ -66,10 +68,24 @@ function ImportDemoOrder({ onImportSuccess }) {
   const loadSwiggyOrders = async () => {
     setSwiggyLoading(true);
     try {
-      const orders = await swiggyService.getOrders();
-      setSwiggyOrders(orders || []);
-      if (orders && orders.length > 0) {
-        const firstId = orders[0].orderId;
+      const active = swiggyService.getActiveOrders();
+      const past = (await swiggyService.getOrders()) || [];
+      const activeIds = new Set(active.map((a) => a.orderId));
+      const combined = [
+        ...active.map((a) => ({
+          orderId: a.orderId,
+          createdAt: a.createdAt,
+          deliveredAt: a.deliveredAt || a.createdAt,
+          status: a.status || "delivered",
+          totalAmount: a.totalAmount || 0,
+          itemCount: (a.items || []).length,
+          isActive: true
+        })),
+        ...past.filter((p) => !activeIds.has(p.orderId))
+      ];
+      setSwiggyOrders(combined);
+      if (combined.length > 0) {
+        const firstId = combined[0].orderId;
         setSelectedSwiggyOrderId(firstId);
         loadSwiggyOrderDetails(firstId);
       } else {
@@ -272,7 +288,14 @@ function ImportDemoOrder({ onImportSuccess }) {
     setImporting(true);
 
     try {
-      // Add items to Pantry DB
+      // 1. Add items to Pantry store React Context directly for instant UI update
+      await addItems(itemsToImport);
+      if (activeTab === "swiggy" && currentSwiggyOrder?.orderId) {
+        swiggyService.markOrderImported(currentSwiggyOrder.orderId);
+      }
+      syncPantryDb();
+
+      // 2. Add items to Pantry DB
       const addedItems = pantryDb.addItems(itemsToImport, false);
 
       // Create Calendar Events
@@ -426,6 +449,25 @@ function ImportDemoOrder({ onImportSuccess }) {
                 ? "Simulates real-time order retrieval and cart checkout via Swiggy Instamart mock endpoints."
                 : "Connects via Builders Club OAuth 2.1 PKCE authorization & Instamart MCP SSE endpoints."}
             </p>
+
+            {swiggyMode === "real" && (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs space-y-1.5">
+                <span className="font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+                  ⚠️ Swiggy Partner Approval Required
+                </span>
+                <p className="text-muted-foreground text-[11px] leading-relaxed">
+                  Local applications are not whitelisted for direct Swiggy OAuth (<em>"Local Application isn't whitelisted yet"</em>).
+                  Demo / Simulation mode is fully functional for importing orders with automatic shelf-life calculation and non-food filtering.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleToggleSwiggyMode}
+                  className="mt-1 px-3 py-1 rounded-md bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs"
+                >
+                  Use Simulation Mode
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Swiggy Order Selector */}

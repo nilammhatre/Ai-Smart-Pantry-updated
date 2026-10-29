@@ -51,6 +51,20 @@ const degradedRes = calculateShelfLife({
 
 assert(degradedRes.estimatedShelfLifeDays === 3, `Freshness score multiplier calculation (Got: ${degradedRes.estimatedShelfLifeDays}, Expected: 3)`);
 
+// Test 4: Contextual Storage Location Multiplier (Counter vs Refrigerator for Spinach: 60% reduction)
+const counterSpinachRes = calculateShelfLife({
+  name: "Fresh Spinach",
+  category: "Vegetables",
+  receivedAt: deliveredAt,
+  storageCondition: "counter",
+  freshnessScore: 100
+});
+
+assert(
+  counterSpinachRes.estimatedShelfLifeDays === 2.4 && counterSpinachRes.storageMultiplier === 0.40,
+  `Contextual Counter storage shelf life (Got: ${counterSpinachRes.estimatedShelfLifeDays} days with multiplier ${counterSpinachRes.storageMultiplier}, Expected: 2.4 days with 0.40 multiplier)`
+);
+
 console.log("=========================================");
 console.log(`TEST RESULTS: ${passed} / ${total} PASSED`);
 console.log("=========================================");
@@ -58,3 +72,4 @@ console.log("=========================================");
 if (passed !== total) {
   process.exit(1);
 }
+

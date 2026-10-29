@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   ShoppingBag,
   Zap,
@@ -18,12 +18,16 @@ import {
   RefreshCw,
   ExternalLink,
   ChevronRight,
-  PackageCheck
+  PackageCheck,
+  AlertTriangle,
+  Search
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { swiggyService } from "@/services/swiggy/swiggyService";
 import { pantryDb } from "@/services/swiggy/pantryDb";
+import { usePantry } from "@/lib/pantry-store";
+import { normalizeSwiggyItem } from "@/services/swiggy/normalizer";
 import { createCalendarEvent } from "@/services/calendarService";
 import { sendWhatsAppAlert } from "@/services/whatsappService";
 
@@ -43,6 +47,7 @@ export default function SwiggyInterfaceModal({
   onOrderSuccess,
   defaultTab = "cart"
 }) {
+  const { addItems, syncPantryDb } = usePantry();
   const [activeTab, setActiveTab] = useState(defaultTab); // 'cart' | 'login' | 'tracking' | 'history'
   const [swiggyMode, setSwiggyMode] = useState(() => swiggyService.getMode());
   const [isConnected, setIsConnected] = useState(() => swiggyService.isConnected());
@@ -78,9 +83,35 @@ export default function SwiggyInterfaceModal({
   const [pastOrders, setPastOrders] = useState([]);
   const [loadingOrders, setLoadingOrders] = useState(false);
 
-  // Sync initial cart items when modal opens
+  // Live Swiggy Instamart Product Search
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
+
+  // Debounced search for Instamart products
   useEffect(() => {
-    if (initialCartItems && initialCartItems.length > 0) {
+    if (!searchQuery.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      setIsSearching(true);
+      try {
+        const results = await swiggyService.searchProducts(searchQuery.trim());
+        setSearchResults(results || []);
+      } catch (err) {
+        console.warn("Product search failed:", err);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery, swiggyMode]);
+
+  // Sync initial cart items when modal opens
+  const wasOpenRef = useRef(false);
+  useEffect(() => {
+    if (isOpen && !wasOpenRef.current && initialCartItems && initialCartItems.length > 0) {
       setCart(
         initialCartItems.map((item, idx) => ({
           id: item.id || `cart_${idx}_${Date.now()}`,
@@ -93,7 +124,8 @@ export default function SwiggyInterfaceModal({
         }))
       );
     }
-  }, [initialCartItems, isOpen]);
+    wasOpenRef.current = isOpen;
+  }, [isOpen]);
 
   // Sync session state on mount / custom events
   useEffect(() => {
@@ -109,20 +141,27 @@ export default function SwiggyInterfaceModal({
     };
   }, []);
 
-  // Fetch past orders when history tab is clicked
+  // Fetch past orders whenever modal opens or connection is active
   useEffect(() => {
-    if (activeTab === "history" && isConnected) {
+    if (isConnected && isOpen) {
       loadPastOrders();
     }
-  }, [activeTab, isConnected]);
+  }, [isConnected, swiggyMode, activeTab, isOpen]);
 
   const loadPastOrders = async () => {
     setLoadingOrders(true);
     try {
       const orders = await swiggyService.getOrders();
-      setPastOrders(orders || []);
+      if (orders && orders.length > 0) {
+        setPastOrders(orders);
+      } else {
+        const active = swiggyService.getActiveOrders();
+        setPastOrders(active || []);
+      }
     } catch (err) {
       console.warn("Could not load past Swiggy orders:", err);
+      const active = swiggyService.getActiveOrders();
+      setPastOrders(active || []);
     } finally {
       setLoadingOrders(false);
     }
@@ -190,9 +229,13 @@ export default function SwiggyInterfaceModal({
   const handleVerifyOtp = async () => {
     setIsLoggingIn(true);
     try {
+      if (swiggyMode === "real") {
+        swiggyService.setMode("mock");
+        setSwiggyMode("mock");
+      }
       await swiggyService.login();
       setIsConnected(true);
-      toast.success("Swiggy Instamart account logged in successfully!", {
+      toast.success("Swiggy Account Connected via Verified Demo OTP (4829)!", {
         icon: <CheckCircle2 className="h-4 w-4 text-emerald-500" />
       });
       setActiveTab("cart");
@@ -203,12 +246,36 @@ export default function SwiggyInterfaceModal({
     }
   };
 
+  const handleConnectRealSwiggy = async () => {
+    setIsLoggingIn(true);
+    try {
+      swiggyService.setMode("real");
+      setSwiggyMode("real");
+      const res = await swiggyService.login();
+      if (res && res.redirectUrl) {
+        toast.info("Redirecting to Swiggy Builders Club OAuth 2.1...");
+      }
+    } catch (err) {
+      toast.error(`Swiggy OAuth Blocked: ${err.message}`, {
+        duration: 8000,
+        description: "Official Swiggy partner credentials or whitelisting are required for production accounts."
+      });
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
   const handleOneTouchLogin = async () => {
     setIsLoggingIn(true);
     try {
+      if (swiggyMode === "real") {
+        swiggyService.setMode("mock");
+        setSwiggyMode("mock");
+      }
       await swiggyService.login();
       setIsConnected(true);
-      toast.success("Connected via Swiggy Instamart Instant Demo Login!", {
+      toast.success("Connected via Swiggy Instamart Simulation Mode!", {
+        description: "Zero external credentials needed. Place orders and sync pantry immediately.",
         icon: <Zap className="h-4 w-4 text-amber-500" />
       });
       setActiveTab("cart");
@@ -232,7 +299,13 @@ export default function SwiggyInterfaceModal({
     swiggyService.setMode(mode);
     setSwiggyMode(mode);
     setIsConnected(swiggyService.isConnected());
-    toast.success(`Switched Swiggy mode to: ${mode.toUpperCase()}`);
+    if (mode === "real") {
+      toast.info("Switched to Genuine Swiggy Builders Club MCP mode.", {
+        description: "Connect your official developer client ID and PKCE authorization."
+      });
+    } else {
+      toast.success("Switched to Instamart Simulation Mode (Zero-credential testing active)");
+    }
   };
 
   // Order Placement & Live Tracking
@@ -255,27 +328,41 @@ export default function SwiggyInterfaceModal({
         qty: item.quantity,
         quantity: item.quantity,
         category: item.category,
-        price: item.price
+        price: item.price,
+        itemId: item.itemId || item.id
       }));
 
-      const res = await swiggyService.sendCartToSwiggy(orderPayload);
+      const res = await swiggyService.sendCartToSwiggy(orderPayload, {
+        totalAmount: billTotal,
+        addressId: "addr_current"
+      });
+
       setActiveOrder({
         ...res,
         items: cart,
         totalAmount: billTotal,
-        address: deliveryAddress
+        address: deliveryAddress,
+        isReal: swiggyMode === "real"
       });
 
       setActiveTab("tracking");
       setOrderStage(1);
       setOrderEta(14);
       toast.success(`🛵 Swiggy Instamart Order #${res.orderId} Placed!`, {
-        description: "15-minute instant delivery partner assigned."
+        description: swiggyMode === "real" ? "Order submitted to Swiggy Instamart via MCP." : "15-minute instant delivery partner assigned."
       });
 
-      // Advance tracking animation
-      setTimeout(() => setOrderStage(2), 2200);
-      setTimeout(() => setOrderStage(3), 5000);
+      // Advance tracking animation and active order state in simulation mode
+      if (swiggyMode === "mock") {
+        setTimeout(() => {
+          setOrderStage(2);
+          swiggyService.updateActiveOrderStatus(res.orderId, "out_for_delivery");
+        }, 2200);
+        setTimeout(() => {
+          setOrderStage(3);
+          swiggyService.updateActiveOrderStatus(res.orderId, "delivered");
+        }, 5000);
+      }
     } catch (err) {
       toast.error(`Order failed: ${err.message}`);
     } finally {
@@ -288,48 +375,75 @@ export default function SwiggyInterfaceModal({
     if (!orderToImport) return;
 
     try {
-      const foodItems = (orderToImport.items || []).map((item) => {
-        const cat = (item.category || "").toLowerCase();
+      const rawItems = orderToImport.items || [];
+      const foodItems = [];
+
+      for (const raw of rawItems) {
+        const norm = normalizeSwiggyItem(raw);
+        if (!norm.isFood) continue; // Filter out non-food items!
+
+        const cat = (norm.category || "").toLowerCase();
         let shelfLife = 7;
-        if (cat.includes("veg") || cat.includes("fruit") || cat.includes("fresh")) shelfLife = 5;
-        else if (cat.includes("dairy") || cat.includes("milk")) shelfLife = 4;
-        else if (cat.includes("bakery") || cat.includes("bread")) shelfLife = 4;
-        else if (cat.includes("meat") || cat.includes("egg")) shelfLife = 4;
-        else if (cat.includes("grain") || cat.includes("atta")) shelfLife = 90;
+        let storage = "Pantry shelf";
+        if (cat.includes("veg") || norm.name.toLowerCase().includes("spinach") || norm.name.toLowerCase().includes("tomato")) {
+          shelfLife = 5;
+          storage = "Refrigerator";
+        } else if (cat.includes("fruit") || norm.name.toLowerCase().includes("banana") || norm.name.toLowerCase().includes("apple")) {
+          shelfLife = 6;
+          storage = "Counter";
+        } else if (cat.includes("dairy") || norm.name.toLowerCase().includes("milk") || norm.name.toLowerCase().includes("paneer")) {
+          shelfLife = 4;
+          storage = "Refrigerator";
+        } else if (cat.includes("bakery") || norm.name.toLowerCase().includes("bread")) {
+          shelfLife = 4;
+          storage = "Pantry shelf";
+        } else if (cat.includes("meat") || cat.includes("egg")) {
+          shelfLife = 4;
+          storage = "Refrigerator";
+        } else if (cat.includes("grain") || norm.name.toLowerCase().includes("atta")) {
+          shelfLife = 90;
+          storage = "Pantry shelf";
+        }
 
         const exp = new Date();
         exp.setDate(exp.getDate() + shelfLife);
         const expStr = exp.toISOString().split("T")[0];
 
-        return {
-          name: item.name,
-          category: item.category || "Grocery",
-          quantity: item.quantity || 1,
-          unit: item.unit || "pcs",
-          price: item.price,
-          receivedAt: new Date().toISOString(),
-          purchaseDate: new Date().toISOString().split("T")[0],
-          expiryDate: expStr,
+        foodItems.push({
+          id: crypto.randomUUID(),
+          name: norm.name,
+          category: norm.category || "Packaged Food",
+          quantity: `${norm.quantity} ${norm.unit || "pcs"}`,
+          freshness: 95,
+          addedDaysAgo: 0,
+          expiresInDays: shelfLife,
+          days_left: shelfLife,
+          storage,
+          expiry_date: expStr,
           consumeByDate: expStr,
-          shelfLifeDays: shelfLife,
+          purchaseDate: new Date().toISOString().split("T")[0],
+          receivedAt: new Date().toISOString(),
           source: `Swiggy Instamart (${swiggyMode.toUpperCase()})`,
-          orderId: orderToImport.orderId
-        };
-      });
-
-      const added = pantryDb.addItems(foodItems, false);
-
-      // Trigger calendar & WhatsApp alerts
-      for (const itm of added) {
-        createCalendarEvent(itm).catch(() => {});
+          orderId: orderToImport.orderId,
+          allergens: [],
+          nutrition: { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, nutrients: [] }
+        });
       }
-      sendWhatsAppAlert(added).catch(() => {});
+
+      if (foodItems.length === 0) {
+        toast.info("No food items found in this order to import.");
+        return;
+      }
+
+      await addItems(foodItems);
+      swiggyService.markOrderImported(orderToImport.orderId);
+      syncPantryDb();
 
       if (onOrderSuccess) {
         onOrderSuccess(orderToImport);
       }
 
-      toast.success("🎉 Items added to Smart Pantry with auto-expiry calculation & WhatsApp alerts!", {
+      toast.success(`🎉 ${foodItems.length} food items added to Smart Pantry with auto-expiry & reminders!`, {
         icon: <CheckCircle2 className="h-4 w-4 text-emerald-500" />
       });
       onClose();
@@ -466,7 +580,12 @@ export default function SwiggyInterfaceModal({
             }`}
           >
             <PackageCheck className="h-4 w-4" />
-            Past Instamart Orders
+            Recent & Past Orders
+            {pastOrders.length > 0 && (
+              <span className="rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 px-2 py-0.2 text-xs font-bold">
+                {pastOrders.length}
+              </span>
+            )}
           </button>
         </div>
 
@@ -492,6 +611,66 @@ export default function SwiggyInterfaceModal({
                   </Button>
                 </div>
               )}
+
+              {/* Product Search Bar */}
+              <div className="relative">
+                <div className="flex items-center rounded-2xl border border-border bg-card px-3.5 py-2.5 shadow-xs focus-within:ring-2 focus-within:ring-orange-500/50">
+                  <Search className="h-4 w-4 text-muted-foreground mr-2 shrink-0" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder={
+                      swiggyMode === "real"
+                        ? "Search genuine Instamart products via MCP (e.g. Milk, Eggs, Rice, Paneer)..."
+                        : "Search Instamart catalog (e.g. Milk, Bread, Atta)..."
+                    }
+                    className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+                  />
+                  {isSearching && (
+                    <span className="h-4 w-4 rounded-full border-2 border-orange-500 border-t-transparent animate-spin mr-1" />
+                  )}
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery("")}
+                      className="text-xs text-muted-foreground hover:text-foreground px-1"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                {/* Live Search Results Dropdown/Card */}
+                {searchResults.length > 0 && (
+                  <div className="mt-2 rounded-2xl border border-orange-500/30 bg-card p-3 shadow-xl space-y-2 animate-fade-in">
+                    <div className="flex items-center justify-between text-xs font-bold text-muted-foreground px-1">
+                      <span>Search Results ({searchResults.length})</span>
+                      <span className="text-[10px] text-orange-600 dark:text-orange-400 font-semibold">
+                        {swiggyMode === "real" ? "Genuine Swiggy MCP Server" : "Instamart Catalog"}
+                      </span>
+                    </div>
+                    <div className="max-h-56 overflow-y-auto divide-y divide-border">
+                      {searchResults.map((prod) => (
+                        <div key={prod.id || prod.itemId} className="py-2 px-1 flex items-center justify-between gap-3 hover:bg-secondary/30 rounded-lg">
+                          <div className="min-w-0 flex-1">
+                            <p className="font-semibold text-xs text-foreground truncate">{prod.name}</p>
+                            <p className="text-[11px] text-muted-foreground">₹{prod.price} · {prod.category} · {prod.unit}</p>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="soft"
+                            onClick={() => addPopularItem(prod)}
+                            className="h-7 px-2.5 text-xs font-bold text-orange-600 dark:text-orange-400 hover:bg-orange-500/15"
+                          >
+                            + ADD
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* Cart Items List */}
               <div className="space-y-3">
@@ -731,22 +910,51 @@ export default function SwiggyInterfaceModal({
                 </div>
               </div>
 
+              {/* Real Swiggy Whitelisting Notice Banner */}
+              {swiggyMode === "real" && (
+                <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 space-y-2 text-xs">
+                  <div className="flex items-center gap-2 font-bold text-amber-700 dark:text-amber-400">
+                    <AlertTriangle className="h-4 w-4" />
+                    <span>Swiggy Access Notice: Local Application isn't whitelisted yet</span>
+                  </div>
+                  <p className="text-muted-foreground leading-relaxed">
+                    Direct sign-in via Swiggy OAuth displays <em>"Local Application isn't whitelisted yet"</em> because enterprise partner approval is required from Swiggy Developers.
+                    External sign-in has been gracefully paused to prevent OAuth errors.
+                  </p>
+                  <div className="pt-1">
+                    <Button
+                      size="sm"
+                      onClick={() => handleToggleMode("mock")}
+                      className="bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs h-8 rounded-xl"
+                    >
+                      Continue in Instamart Simulation Mode (Fully Functional)
+                    </Button>
+                  </div>
+                </div>
+              )}
+
               {/* Login Status Card if Connected */}
               {isConnected ? (
                 <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-5 space-y-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className="h-12 w-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center font-bold text-lg shadow-md">
-                        NM
+                        {swiggyMode === "real" ? "IM" : "NM"}
                       </div>
                       <div>
                         <div className="flex items-center gap-2">
-                          <h4 className="font-bold text-base text-foreground">Nilam Mhatre</h4>
+                          <h4 className="font-bold text-base text-foreground">
+                            {swiggyMode === "real" ? "Genuine Swiggy MCP User" : "Nilam Mhatre"}
+                          </h4>
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500 text-black uppercase">
-                            ⭐ Swiggy One Member
+                            {swiggyMode === "real" ? "Official MCP Connected" : "⭐ Swiggy One Member"}
                           </span>
                         </div>
-                        <p className="text-xs text-muted-foreground">+91 9322348511 · Active Indian Account</p>
+                        <p className="text-xs text-muted-foreground">
+                          {swiggyMode === "real"
+                            ? "Connected via Swiggy Builders Club OAuth 2.1 PKCE"
+                            : "+91 9322348511 · Active Indian Account"}
+                        </p>
                       </div>
                     </div>
 
@@ -762,15 +970,101 @@ export default function SwiggyInterfaceModal({
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 text-xs border-t border-emerald-500/20">
                     <div>
-                      <span className="text-muted-foreground block">Default Delivery Location</span>
+                      <span className="text-muted-foreground block">Delivery Address</span>
                       <span className="font-medium text-foreground">{deliveryAddress}</span>
                     </div>
                     <div>
-                      <span className="text-muted-foreground block">Session Token State</span>
+                      <span className="text-muted-foreground block">Session Security</span>
                       <span className="font-mono text-emerald-600 dark:text-emerald-400 font-semibold">
-                        active_jwt_{swiggyMode}_auth_granted
+                        {swiggyMode === "real" ? "OAuth2.1 PKCE Token Stored" : "Simulated Local Session"}
                       </span>
                     </div>
+                  </div>
+
+                  {/* Recent Orders of the Logged Account */}
+                  <div className="pt-3 border-t border-emerald-500/20 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h5 className="font-bold text-xs uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                        <PackageCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                        Recent Swiggy Orders ({pastOrders.length})
+                      </h5>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={loadPastOrders}
+                          disabled={loadingOrders}
+                          className="text-xs h-7 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10"
+                        >
+                          <RefreshCw className={`h-3 w-3 mr-1 ${loadingOrders ? "animate-spin" : ""}`} />
+                          Refresh Orders
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setActiveTab("history")}
+                          className="text-xs h-7 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
+                        >
+                          View All ({pastOrders.length})
+                        </Button>
+                      </div>
+                    </div>
+
+                    {loadingOrders ? (
+                      <div className="p-4 rounded-xl border border-border bg-card text-center space-y-2">
+                        <span className="h-4 w-4 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin inline-block" />
+                        <p className="text-xs text-muted-foreground">Fetching your Swiggy orders via MCP...</p>
+                      </div>
+                    ) : pastOrders.length === 0 ? (
+                      <div className="p-4 rounded-xl border border-dashed border-border bg-card text-center space-y-1">
+                        <p className="text-xs font-semibold text-foreground">No recent Swiggy orders found.</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          Orders placed with this account will automatically sync here.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-60 overflow-y-auto">
+                        {pastOrders.slice(0, 3).map((ord) => (
+                          <div
+                            key={ord.orderId}
+                            className="p-3 rounded-xl border border-border bg-card flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs hover:border-emerald-500/40 transition-colors shadow-xs"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-foreground">Order #{ord.orderId}</span>
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 uppercase">
+                                  {ord.status || "Delivered"}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-muted-foreground mt-0.5">
+                                {new Date(ord.createdAt || Date.now()).toLocaleDateString()} · {ord.itemCount || (ord.items || []).length || 1} items · ₹{ord.totalAmount}
+                              </p>
+                              {ord.items && ord.items.length > 0 && (
+                                <p className="text-[11px] text-foreground truncate mt-0.5 font-medium">
+                                  {ord.items.map((i) => `${i.quantity || 1}x ${i.name}`).join(", ")}
+                                </p>
+                              )}
+                            </div>
+
+                            <Button
+                              size="sm"
+                              variant="soft"
+                              onClick={async () => {
+                                try {
+                                  const details = await swiggyService.getOrderDetails(ord.orderId);
+                                  handleImportToPantry(details);
+                                } catch (err) {
+                                  toast.error(`Import failed: ${err.message}`);
+                                }
+                              }}
+                              className="h-7 px-2.5 text-[11px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 shrink-0"
+                            >
+                              📥 Import to Pantry
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex justify-end pt-2">
@@ -782,8 +1076,88 @@ export default function SwiggyInterfaceModal({
                     </Button>
                   </div>
                 </div>
+              ) : swiggyMode === "real" ? (
+                /* Real Swiggy Official OAuth 2.1 Login Box */
+                <div className="rounded-2xl border border-emerald-500/30 bg-card p-6 space-y-5 shadow-sm">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                        <h4 className="font-bold text-base text-foreground">
+                          Official Swiggy Builders Club OAuth 2.1
+                        </h4>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Connect genuine Swiggy Instamart account using OAuth 2.1 with PKCE (RFC 7636) and Dynamic Client Registration (RFC 7591).
+                      </p>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 shrink-0">
+                      RFC 7591 / PKCE
+                    </span>
+                  </div>
+
+                  {/* Architecture & Endpoints Specs */}
+                  <div className="rounded-xl border border-border bg-surface p-3.5 space-y-2 text-xs font-mono">
+                    <div className="flex justify-between items-center text-muted-foreground">
+                      <span>Auth Endpoint:</span>
+                      <span className="text-foreground">https://mcp.swiggy.com/auth/authorize</span>
+                    </div>
+                    <div className="flex justify-between items-center text-muted-foreground">
+                      <span>Token Endpoint:</span>
+                      <span className="text-foreground">https://mcp.swiggy.com/auth/token</span>
+                    </div>
+                    <div className="flex justify-between items-center text-muted-foreground">
+                      <span>MCP Server:</span>
+                      <span className="text-foreground">https://mcp.swiggy.com/im</span>
+                    </div>
+                    <div className="flex justify-between items-center text-muted-foreground">
+                      <span>Redirect URI:</span>
+                      <span className="text-foreground">https://localhost:8080/app/shopping</span>
+                    </div>
+                  </div>
+
+                  {/* Action Button */}
+                  <div className="space-y-3 pt-1">
+                    <Button
+                      onClick={handleConnectRealSwiggy}
+                      disabled={isLoggingIn}
+                      className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm py-3 rounded-xl shadow-md flex items-center justify-center gap-2"
+                    >
+                      {isLoggingIn ? (
+                        <>
+                          <span className="h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                          Initiating Swiggy Authorization...
+                        </>
+                      ) : (
+                        <>
+                          <ExternalLink className="h-4 w-4" />
+                          Connect Official Swiggy Account (OAuth 2.1 PKCE)
+                        </>
+                      )}
+                    </Button>
+
+                    {/* Developer Whitelisting Notice Card */}
+                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5 space-y-2 text-xs">
+                      <div className="flex items-center gap-2 font-bold text-amber-700 dark:text-amber-400">
+                        <AlertTriangle className="h-4 w-4 shrink-0" />
+                        <span>Swiggy Whitelisting Requirement</span>
+                      </div>
+                      <p className="text-muted-foreground text-[11px] leading-relaxed">
+                        Swiggy Builders Club requires your third-party application or client ID to be whitelisted by the Swiggy Developers team. If your account displays <em>"Local Application isn't whitelisted yet"</em>, you can switch to the fully interactive Instamart Simulation Mode below to test orders, cart, tracking, and automatic pantry sync immediately.
+                      </p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleToggleMode("mock")}
+                        className="w-full text-xs font-bold border-amber-500/40 text-amber-700 dark:text-amber-400 hover:bg-amber-500/15"
+                      >
+                        🧪 Switch to Instamart Simulation Mode (Zero Credentials Required)
+                      </Button>
+                    </div>
+                  </div>
+                </div>
               ) : (
-                /* Login Form if not Connected */
+                /* Mock Mode: Phone + OTP & 1-Click Login Form */
                 <div className="grid gap-6 sm:grid-cols-2">
                   {/* Phone + OTP Login Box */}
                   <div className="rounded-2xl border border-border bg-card p-5 space-y-4 shadow-sm">
@@ -951,6 +1325,32 @@ export default function SwiggyInterfaceModal({
                     );
                   })}
                 </div>
+
+                {/* Real Swiggy MCP Live Tracking Poller */}
+                {activeOrder?.isReal && (
+                  <div className="flex items-center justify-between p-3 rounded-xl bg-orange-500/10 border border-orange-500/30 text-xs">
+                    <span className="font-semibold text-orange-600 dark:text-orange-400">
+                      Live Swiggy MCP Tracking: {activeOrder.status || "Processing"}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs h-7 border-orange-500/40 text-orange-600 dark:text-orange-400"
+                      onClick={async () => {
+                        const updated = await swiggyService.pollRealOrder(activeOrder.orderId);
+                        if (updated) {
+                          setActiveOrder({ ...activeOrder, ...updated });
+                          if (updated.status === "delivered") setOrderStage(3);
+                          toast.success(`Updated order status: ${updated.status}`);
+                        } else {
+                          toast.info("Order status is up to date.");
+                        }
+                      }}
+                    >
+                      <RefreshCw className="h-3 w-3 mr-1" /> Poll Status via MCP
+                    </Button>
+                  </div>
+                )}
               </div>
 
               {/* Ordered Items Breakdown */}
@@ -1013,9 +1413,33 @@ export default function SwiggyInterfaceModal({
                   </Button>
                 </div>
               ) : pastOrders.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-border p-8 text-center space-y-2">
-                  <p className="text-sm font-medium">No previous Swiggy orders found.</p>
-                  <p className="text-xs text-muted-foreground">Place an order from the cart to view it here.</p>
+                <div className="rounded-2xl border border-dashed border-border p-8 text-center space-y-3">
+                  <PackageCheck className="h-8 w-8 mx-auto text-muted-foreground/60" />
+                  <p className="text-sm font-semibold">No recent Swiggy orders found.</p>
+                  <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                    Your Swiggy account is connected, but no past orders were returned by Swiggy Instamart for this session. You can place an order from your shopping list or view demo order activity.
+                  </p>
+                  <div className="flex flex-wrap justify-center gap-2 pt-1">
+                    <Button
+                      size="sm"
+                      onClick={() => setActiveTab("cart")}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs"
+                    >
+                      🛒 Go to Cart ({cart.length})
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={async () => {
+                        const mockOrders = await mockSwiggyProvider.getOrders();
+                        setPastOrders(mockOrders);
+                        toast.success("Loaded demonstration past orders for pantry testing.");
+                      }}
+                      className="text-xs"
+                    >
+                      📦 View Sample Orders
+                    </Button>
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -1032,8 +1456,24 @@ export default function SwiggyInterfaceModal({
                           </span>
                         </div>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          {new Date(ord.createdAt || Date.now()).toLocaleString()} · {ord.itemCount || 0} items
+                          {new Date(ord.createdAt || Date.now()).toLocaleString()} · {ord.itemCount || (ord.items || []).length || 0} items
                         </p>
+                        {ord.items && ord.items.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {ord.items.map((it, idx) => (
+                              <span
+                                key={idx}
+                                className="inline-flex items-center gap-1 text-[11px] bg-secondary px-2 py-0.5 rounded-md font-medium text-foreground"
+                              >
+                                <span>{it.quantity || 1}x</span>
+                                <span className="font-semibold">{it.name}</span>
+                                {it.category && (
+                                  <span className="text-[10px] text-muted-foreground">({it.category})</span>
+                                )}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
 
                       <div className="flex items-center justify-between sm:justify-end gap-4">

@@ -11,6 +11,13 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppRouteImport } from './routes/app'
+import { Route as ExpiryAlertsRouteImport } from './routes/expiry-alerts'
+import { Route as InsightsRouteImport } from './routes/insights'
+import { Route as MyPantryRouteImport } from './routes/my-pantry'
+import { Route as NutritionRouteImport } from './routes/nutrition'
+import { Route as PantryAiRouteImport } from './routes/pantry-ai'
+import { Route as RecipesRouteImport } from './routes/recipes'
+import { Route as ScanFoodRouteImport } from './routes/scan-food'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as AppAlertsRouteImport } from './routes/app.alerts'
 import { Route as AppAssistantRouteImport } from './routes/app.assistant'
@@ -21,6 +28,7 @@ import { Route as AppNutritionRouteImport } from './routes/app.nutrition'
 import { Route as AppScanRouteImport } from './routes/app.scan'
 import { Route as AppSettingsRouteImport } from './routes/app.settings'
 import { Route as AppShoppingRouteImport } from './routes/app.shopping'
+import { Route as ItemIdRouteImport } from './routes/item.$id'
 import { Route as AppPantryIndexRouteImport } from './routes/app.pantry.index'
 import { Route as AppPantryIdRouteImport } from './routes/app.pantry.$id'
 import { Route as AppRecipesIndexRouteImport } from './routes/app.recipes.index'
@@ -34,6 +42,41 @@ const IndexRoute = IndexRouteImport.update({
 const AppRoute = AppRouteImport.update({
   id: '/app',
   path: '/app',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ExpiryAlertsRoute = ExpiryAlertsRouteImport.update({
+  id: '/expiry-alerts',
+  path: '/expiry-alerts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InsightsRoute = InsightsRouteImport.update({
+  id: '/insights',
+  path: '/insights',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MyPantryRoute = MyPantryRouteImport.update({
+  id: '/my-pantry',
+  path: '/my-pantry',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NutritionRoute = NutritionRouteImport.update({
+  id: '/nutrition',
+  path: '/nutrition',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PantryAiRoute = PantryAiRouteImport.update({
+  id: '/pantry-ai',
+  path: '/pantry-ai',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RecipesRoute = RecipesRouteImport.update({
+  id: '/recipes',
+  path: '/recipes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ScanFoodRoute = ScanFoodRouteImport.update({
+  id: '/scan-food',
+  path: '/scan-food',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppIndexRoute = AppIndexRouteImport.update({
@@ -86,6 +129,11 @@ const AppShoppingRoute = AppShoppingRouteImport.update({
   path: '/shopping',
   getParentRoute: () => AppRoute,
 } as any)
+const ItemIdRoute = ItemIdRouteImport.update({
+  id: '/item/$id',
+  path: '/item/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AppPantryIndexRoute = AppPantryIndexRouteImport.update({
   id: '/pantry/',
   path: '/pantry/',
@@ -110,6 +158,13 @@ const AppRecipesIdRoute = AppRecipesIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app': typeof AppRouteWithChildren
+  '/expiry-alerts': typeof ExpiryAlertsRoute
+  '/insights': typeof InsightsRoute
+  '/my-pantry': typeof MyPantryRoute
+  '/nutrition': typeof NutritionRoute
+  '/pantry-ai': typeof PantryAiRoute
+  '/recipes': typeof RecipesRoute
+  '/scan-food': typeof ScanFoodRoute
   '/app/alerts': typeof AppAlertsRoute
   '/app/assistant': typeof AppAssistantRoute
   '/app/history': typeof AppHistoryRoute
@@ -119,6 +174,7 @@ export interface FileRoutesByFullPath {
   '/app/scan': typeof AppScanRoute
   '/app/settings': typeof AppSettingsRoute
   '/app/shopping': typeof AppShoppingRoute
+  '/item/$id': typeof ItemIdRoute
   '/app/': typeof AppIndexRoute
   '/app/pantry/$id': typeof AppPantryIdRoute
   '/app/recipes/$id': typeof AppRecipesIdRoute
@@ -127,6 +183,13 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/expiry-alerts': typeof ExpiryAlertsRoute
+  '/insights': typeof InsightsRoute
+  '/my-pantry': typeof MyPantryRoute
+  '/nutrition': typeof NutritionRoute
+  '/pantry-ai': typeof PantryAiRoute
+  '/recipes': typeof RecipesRoute
+  '/scan-food': typeof ScanFoodRoute
   '/app/alerts': typeof AppAlertsRoute
   '/app/assistant': typeof AppAssistantRoute
   '/app/history': typeof AppHistoryRoute
@@ -136,6 +199,7 @@ export interface FileRoutesByTo {
   '/app/scan': typeof AppScanRoute
   '/app/settings': typeof AppSettingsRoute
   '/app/shopping': typeof AppShoppingRoute
+  '/item/$id': typeof ItemIdRoute
   '/app': typeof AppIndexRoute
   '/app/pantry/$id': typeof AppPantryIdRoute
   '/app/recipes/$id': typeof AppRecipesIdRoute
@@ -146,6 +210,13 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/app': typeof AppRouteWithChildren
+  '/expiry-alerts': typeof ExpiryAlertsRoute
+  '/insights': typeof InsightsRoute
+  '/my-pantry': typeof MyPantryRoute
+  '/nutrition': typeof NutritionRoute
+  '/pantry-ai': typeof PantryAiRoute
+  '/recipes': typeof RecipesRoute
+  '/scan-food': typeof ScanFoodRoute
   '/app/alerts': typeof AppAlertsRoute
   '/app/assistant': typeof AppAssistantRoute
   '/app/history': typeof AppHistoryRoute
@@ -155,6 +226,7 @@ export interface FileRoutesById {
   '/app/scan': typeof AppScanRoute
   '/app/settings': typeof AppSettingsRoute
   '/app/shopping': typeof AppShoppingRoute
+  '/item/$id': typeof ItemIdRoute
   '/app/': typeof AppIndexRoute
   '/app/pantry/$id': typeof AppPantryIdRoute
   '/app/recipes/$id': typeof AppRecipesIdRoute
@@ -166,6 +238,13 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/app'
+    | '/expiry-alerts'
+    | '/insights'
+    | '/my-pantry'
+    | '/nutrition'
+    | '/pantry-ai'
+    | '/recipes'
+    | '/scan-food'
     | '/app/alerts'
     | '/app/assistant'
     | '/app/history'
@@ -175,6 +254,7 @@ export interface FileRouteTypes {
     | '/app/scan'
     | '/app/settings'
     | '/app/shopping'
+    | '/item/$id'
     | '/app/'
     | '/app/pantry/$id'
     | '/app/recipes/$id'
@@ -183,6 +263,13 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/expiry-alerts'
+    | '/insights'
+    | '/my-pantry'
+    | '/nutrition'
+    | '/pantry-ai'
+    | '/recipes'
+    | '/scan-food'
     | '/app/alerts'
     | '/app/assistant'
     | '/app/history'
@@ -192,6 +279,7 @@ export interface FileRouteTypes {
     | '/app/scan'
     | '/app/settings'
     | '/app/shopping'
+    | '/item/$id'
     | '/app'
     | '/app/pantry/$id'
     | '/app/recipes/$id'
@@ -201,6 +289,13 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/app'
+    | '/expiry-alerts'
+    | '/insights'
+    | '/my-pantry'
+    | '/nutrition'
+    | '/pantry-ai'
+    | '/recipes'
+    | '/scan-food'
     | '/app/alerts'
     | '/app/assistant'
     | '/app/history'
@@ -210,6 +305,7 @@ export interface FileRouteTypes {
     | '/app/scan'
     | '/app/settings'
     | '/app/shopping'
+    | '/item/$id'
     | '/app/'
     | '/app/pantry/$id'
     | '/app/recipes/$id'
@@ -220,6 +316,14 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRouteWithChildren
+  ExpiryAlertsRoute: typeof ExpiryAlertsRoute
+  InsightsRoute: typeof InsightsRoute
+  MyPantryRoute: typeof MyPantryRoute
+  NutritionRoute: typeof NutritionRoute
+  PantryAiRoute: typeof PantryAiRoute
+  RecipesRoute: typeof RecipesRoute
+  ScanFoodRoute: typeof ScanFoodRoute
+  ItemIdRoute: typeof ItemIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -236,6 +340,55 @@ declare module '@tanstack/react-router' {
       path: '/app'
       fullPath: '/app'
       preLoaderRoute: typeof AppRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/expiry-alerts': {
+      id: '/expiry-alerts'
+      path: '/expiry-alerts'
+      fullPath: '/expiry-alerts'
+      preLoaderRoute: typeof ExpiryAlertsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/insights': {
+      id: '/insights'
+      path: '/insights'
+      fullPath: '/insights'
+      preLoaderRoute: typeof InsightsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/my-pantry': {
+      id: '/my-pantry'
+      path: '/my-pantry'
+      fullPath: '/my-pantry'
+      preLoaderRoute: typeof MyPantryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/nutrition': {
+      id: '/nutrition'
+      path: '/nutrition'
+      fullPath: '/nutrition'
+      preLoaderRoute: typeof NutritionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pantry-ai': {
+      id: '/pantry-ai'
+      path: '/pantry-ai'
+      fullPath: '/pantry-ai'
+      preLoaderRoute: typeof PantryAiRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/recipes': {
+      id: '/recipes'
+      path: '/recipes'
+      fullPath: '/recipes'
+      preLoaderRoute: typeof RecipesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/scan-food': {
+      id: '/scan-food'
+      path: '/scan-food'
+      fullPath: '/scan-food'
+      preLoaderRoute: typeof ScanFoodRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/app/': {
@@ -308,6 +461,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppShoppingRouteImport
       parentRoute: typeof AppRoute
     }
+    '/item/$id': {
+      id: '/item/$id'
+      path: '/item/$id'
+      fullPath: '/item/$id'
+      preLoaderRoute: typeof ItemIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/app/pantry/': {
       id: '/app/pantry/'
       path: '/pantry'
@@ -378,6 +538,14 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRouteWithChildren,
+  ExpiryAlertsRoute: ExpiryAlertsRoute,
+  InsightsRoute: InsightsRoute,
+  MyPantryRoute: MyPantryRoute,
+  NutritionRoute: NutritionRoute,
+  PantryAiRoute: PantryAiRoute,
+  RecipesRoute: RecipesRoute,
+  ScanFoodRoute: ScanFoodRoute,
+  ItemIdRoute: ItemIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

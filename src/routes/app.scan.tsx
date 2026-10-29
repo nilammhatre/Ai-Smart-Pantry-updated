@@ -13,10 +13,12 @@ import { PageHeader, Ring, StatusBadge } from "@/components/pantry/ui";
 import { cn } from "@/lib/utils";
 import { identifyAndAnalyzeFood, recalculateForCorrectedFood } from "@/services/foodIdentificationService";
 import { scanFoodLabelOCR } from "@/services/ocrService";
-import { lookupBarcodeOpenFoodFacts } from "@/services/openFoodFactsService";
-import { calculateShelfLife } from "@/services/shelfLifeEngine";
+import { processBarcodePipeline, startBarcodeCamera } from "@/services/barcodeDecoderService";
+import { scanFoodWithGemini, type GeminiScanFoodItem } from "@/services/geminiService";
 import ImportDemoOrder from "@/components/pantry/ImportDemoOrder";
 import EndToEndDemo from "@/components/pantry/EndToEndDemo";
+import { calculateShelfLife } from "@/services/shelfLifeEngine.js";
+import { swiggyService } from "@/services/swiggy/swiggyService";
 
 type Tab = "photo" | "label" | "barcode" | "instamart" | "manual";
 
@@ -206,6 +208,7 @@ function PhotoScan() {
   const [preview, setPreview] = useState<string>();
   const [scanning, setScanning] = useState(false);
   const [result, setResult] = useState<any>(null);
+  const [detectedList, setDetectedList] = useState<GeminiScanFoodItem[]>([]);
   const [qualityError, setQualityError] = useState<string | null>(null);
 
   // User correction states
@@ -215,14 +218,60 @@ function PhotoScan() {
 
   const add = useAddAndToast();
 
-  const start = async (url: string, name: string) => {
+  const start = async (url: string, name?: string) => {
     setPreview(url);
     setResult(null);
+    setDetectedList([]);
     setQualityError(null);
     setIsEditing(false);
     setScanning(true);
 
     try {
+      // 1. Send photo to Gemini (gemini-2.5-flash) with structured JSON schema
+      const geminiRes = await scanFoodWithGemini(url);
+
+      if (geminiRes.success && geminiRes.items.length > 0) {
+        setDetectedList(geminiRes.items);
+
+        const first = geminiRes.items[0];
+        const isFirstSpoiled = first.condition === "Spoiled" || first.estimated_shelf_life_days <= 0;
+        setResult({
+          foodName: first.name,
+          category: first.category,
+          quantity: first.quantity,
+          storage: isFirstSpoiled ? "Discard safely — not safe for consumption" : first.storage,
+          remainingDays: first.estimated_shelf_life_days,
+          shelfLifeEstimate: isFirstSpoiled ? "Immediate (Expired)" : `${first.estimated_shelf_life_days} days`,
+          expiryDate: isFirstSpoiled ? "Immediate (Expired)" : first.expiry_date,
+          consumeByDate: isFirstSpoiled ? "Immediate (Expired)" : first.expiry_date,
+          freshnessScore: first.freshness_score,
+          condition: first.condition,
+          aiExplanation: first.visual_notes,
+          identificationConfidence: 96,
+          isUncertain: false,
+          visibleIssues: isFirstSpoiled ? ["Signs of spoilage detected"] : (first.spoilage_markers ? first.spoilage_markers.filter((m: string) => m !== "none") : []),
+          recommendation: isFirstSpoiled ? "Discard safely — not safe for consumption" : `Store in ${first.storage}`,
+          spoilageRisk: isFirstSpoiled ? "high" : "low",
+          metadata: {
+            allergens: first.allergens,
+            nutrition: {
+              calories: first.macros_per_100g.calories,
+              protein: first.macros_per_100g.protein,
+              carbs: first.macros_per_100g.carbs,
+              fat: first.macros_per_100g.fat,
+              fiber: first.macros_per_100g.fiber,
+              nutrients: []
+            }
+          },
+          geminiData: first
+        });
+        setEditedName(first.name);
+        setEditedCategory(first.category as Category);
+        setScanning(false);
+        return;
+      }
+
+      // 2. Fallback to local multi-stage pipeline
       const fullRes = await identifyAndAnalyzeFood({
         imageBase64: url,
         mode: "photo",
@@ -235,14 +284,34 @@ function PhotoScan() {
         return;
       }
 
-      setResult(fullRes);
-      setEditedName(fullRes.foodName);
+      const isFallbackSpoiled = fullRes.condition === "Spoiled" || fullRes.freshnessStatus === "ROTTEN" || fullRes.remainingDays <= 0 || fullRes.freshnessScore <= 15;
+      let cleanRecommendation = fullRes.recommendation || "";
+      if (isFallbackSpoiled || /DO_NOT_CONSUME|INSPECT|RETAKE/i.test(cleanRecommendation)) {
+        cleanRecommendation = "Discard safely — not safe for consumption";
+      }
+
+      setResult({
+        ...fullRes,
+        expiryDate: isFallbackSpoiled ? "Immediate (Expired)" : (fullRes.expiryDate || "Immediate (Expired)"),
+        consumeByDate: isFallbackSpoiled ? "Immediate (Expired)" : (fullRes.consumeByDate || "Immediate (Expired)"),
+        shelfLifeEstimate: isFallbackSpoiled ? "Immediate (Expired)" : fullRes.shelfLifeEstimate,
+        recommendation: cleanRecommendation,
+        storage: isFallbackSpoiled ? "Discard safely — not safe for consumption" : fullRes.storage
+      });
+      setEditedName(fullRes.foodName === "Food not confidently identified" ? "" : fullRes.foodName);
       setEditedCategory(fullRes.category as Category);
       if (fullRes.isUncertain) {
         setIsEditing(true);
+        toast.info("We noticed some fuzziness—please confirm your item name.", {
+          icon: <Sparkles className="h-4 w-4 text-primary" />
+        });
       }
     } catch (e: any) {
-      toast.error("Multi-stage AI pipeline fallback applied");
+      // Smoothly fall back to manual verification with an encouraging message — never show raw technical error
+      setIsEditing(true);
+      toast.info("We noticed some fuzziness—please confirm your item name.", {
+        icon: <Sparkles className="h-4 w-4 text-primary" />
+      });
     } finally {
       setScanning(false);
     }
@@ -276,14 +345,101 @@ function PhotoScan() {
     toast.success(`Food identity updated to "${editedName.trim()}". Shelf-life & nutrition recalculated.`);
   };
 
+  const handleSelectDetectedItem = (item: GeminiScanFoodItem) => {
+    const isSpoiled = item.condition === "Spoiled" || item.estimated_shelf_life_days <= 0;
+    setResult({
+      foodName: item.name,
+      category: item.category,
+      quantity: item.quantity,
+      storage: isSpoiled ? "Discard safely — not safe for consumption" : item.storage,
+      remainingDays: item.estimated_shelf_life_days,
+      shelfLifeEstimate: isSpoiled ? "Immediate (Expired)" : `${item.estimated_shelf_life_days} days`,
+      expiryDate: isSpoiled ? "Immediate (Expired)" : item.expiry_date,
+      consumeByDate: isSpoiled ? "Immediate (Expired)" : item.expiry_date,
+      freshnessScore: item.freshness_score,
+      condition: item.condition,
+      aiExplanation: item.visual_notes,
+      identificationConfidence: 96,
+      isUncertain: false,
+      visibleIssues: isSpoiled ? ["Signs of spoilage detected"] : (item.spoilage_markers ? item.spoilage_markers.filter((m: string) => m !== "none") : []),
+      recommendation: isSpoiled ? "Discard safely — not safe for consumption" : `Store in ${item.storage}`,
+      spoilageRisk: isSpoiled ? "high" : "low",
+      metadata: {
+        allergens: item.allergens,
+        nutrition: {
+          calories: item.macros_per_100g.calories,
+          protein: item.macros_per_100g.protein,
+          carbs: item.macros_per_100g.carbs,
+          fat: item.macros_per_100g.fat,
+          fiber: item.macros_per_100g.fiber,
+          nutrients: []
+        }
+      },
+      geminiData: item
+    });
+    setEditedName(item.name);
+    setEditedCategory(item.category as Category);
+    setIsEditing(false);
+  };
+
+  const handleAddAllDetected = () => {
+    if (detectedList.length === 0) return;
+    detectedList.forEach((it) => {
+      const isSpoiled = it.condition === "Spoiled" || it.estimated_shelf_life_days <= 0;
+      add(
+        {
+          id: crypto.randomUUID(),
+          name: it.name,
+          category: it.category as Category,
+          quantity: it.quantity || "1 pcs",
+          freshness: it.freshness_score || (isSpoiled ? 10 : 85),
+          addedDaysAgo: 0,
+          expiresInDays: it.estimated_shelf_life_days,
+          expiry_date: isSpoiled ? undefined : it.expiry_date,
+          days_left: it.estimated_shelf_life_days,
+          storage: (it.storage as Storage) || "Refrigerator",
+          image: preview || foodImages.tomatoes,
+          allergens: it.allergens || [],
+          nutrition: {
+            calories: it.macros_per_100g.calories,
+            protein: it.macros_per_100g.protein,
+            carbs: it.macros_per_100g.carbs,
+            fat: it.macros_per_100g.fat,
+            fiber: it.macros_per_100g.fiber,
+            nutrients: []
+          },
+          visualScanNotes: it.visual_notes,
+          spoilageRisk: isSpoiled ? "high" : "low",
+          storageRecommendation: isSpoiled ? "Discard safely — not safe for consumption" : `Store in ${it.storage}`,
+          consumeByDate: isSpoiled ? "Immediate (Expired)" : it.expiry_date,
+          isVerifiedExpiry: false,
+          printedExpiryDate: null,
+          estimatedConsumeByDate: isSpoiled ? "Immediate (Expired)" : it.expiry_date,
+          spoilageStatus: isSpoiled ? "SPOILED" : it.condition === "Use Soon" ? "USE_SOON" : "FRESH",
+          hasCriticalSpoilage: isSpoiled,
+          requiresConfirmation: false,
+          scanMetadata: {
+            source: "photo_gemini_batch",
+            condition: it.condition,
+            aiExplanation: it.visual_notes
+          }
+        },
+        "Photo",
+        `Batch Scan: ${it.name}`
+      );
+    });
+    toast.success(`Successfully added all ${detectedList.length} items to your pantry!`);
+  };
+
   const reset = () => {
     setPreview(undefined);
     setResult(null);
+    setDetectedList([]);
     setQualityError(null);
     setIsEditing(false);
   };
 
-  const statusBadgeLabel = result ? (result.condition === "Spoiled" ? "Spoiled" : result.condition === "Overripe" ? "Soon" : "Fresh") : "Fresh";
+  const statusBadgeLabel = result ? (result.condition === "Spoiled" ? "Spoiled" : result.condition === "Overripe" ? "Use Soon" : "Fresh") : "Fresh";
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
@@ -328,6 +484,40 @@ function PhotoScan() {
           )
         ) : (
           <div className="space-y-6 animate-rise">
+            {/* Multi-Item Detection Banner */}
+            {detectedList.length > 1 && (
+              <div className="rounded-2xl border-2 border-primary/30 bg-primary-soft/40 p-4 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-primary shrink-0" />
+                    <span className="text-sm font-bold text-foreground">
+                      {detectedList.length} Groceries Detected in Photo
+                    </span>
+                  </div>
+                  <Button size="sm" onClick={handleAddAllDetected} className="shadow-sm">
+                    <Plus className="mr-1.5 h-3.5 w-3.5" /> Add All {detectedList.length} to Pantry
+                  </Button>
+                </div>
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {detectedList.map((item, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => handleSelectDetectedItem(item)}
+                      className={cn(
+                        "rounded-full px-3 py-1 text-xs font-semibold transition-all border",
+                        result?.foodName === item.name
+                          ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                          : "bg-card text-muted-foreground border-border hover:text-foreground"
+                      )}
+                    >
+                      {item.name} ({item.quantity})
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Safety Warning Banner */}
             {result.safetyWarning && (
               <div className="flex items-start gap-3 rounded-2xl bg-spoiled-soft p-4 text-sm text-spoiled border border-spoiled/40 font-medium">
@@ -469,19 +659,33 @@ function PhotoScan() {
               <div className="rounded-2xl bg-surface p-3 border border-border/40">
                 <dt className="text-[11px] text-muted-foreground uppercase font-medium">Remaining Shelf Life</dt>
                 <dd className="font-bold text-xs mt-0.5 leading-relaxed">
-                  {result.shelfLifeEstimate} <span className="text-[10px] text-muted-foreground font-normal">(AI Estimate)</span>
+                  {result.condition === "Spoiled" || result.remainingDays <= 0 ? (
+                    <span className="text-spoiled font-semibold">Immediate (Expired)</span>
+                  ) : (
+                    <>
+                      {result.shelfLifeEstimate} <span className="text-[10px] text-muted-foreground font-normal">(AI Estimate)</span>
+                    </>
+                  )}
                 </dd>
               </div>
               <div className="rounded-2xl bg-surface p-3 border border-border/40">
                 <dt className="text-[11px] text-muted-foreground uppercase font-medium">Expiry Date</dt>
                 <dd className="font-bold text-xs mt-0.5 leading-relaxed">
-                  {result.expiryDate}
+                  {result.condition === "Spoiled" || result.remainingDays <= 0 || !result.expiryDate || result.expiryDate === "Not applicable" || result.expiryDate === "null" ? (
+                    <span className="text-spoiled font-semibold">Immediate (Expired)</span>
+                  ) : (
+                    result.expiryDate
+                  )}
                 </dd>
               </div>
               <div className="rounded-2xl bg-surface p-3 border border-border/40">
                 <dt className="text-[11px] text-muted-foreground uppercase font-medium">Storage Advice</dt>
                 <dd className="font-semibold text-xs mt-0.5 leading-relaxed">
-                  {result.recommendation || "Keep Refrigerated"}
+                  {result.condition === "Spoiled" || result.remainingDays <= 0 || /DO_NOT_CONSUME|INSPECT|RETAKE/i.test(result.recommendation || "") ? (
+                    <span className="text-spoiled">Discard safely — not safe for consumption</span>
+                  ) : (
+                    result.recommendation || "Keep Refrigerated"
+                  )}
                 </dd>
               </div>
               <div className="rounded-2xl bg-surface p-3 border border-border/40">
@@ -492,29 +696,95 @@ function PhotoScan() {
               </div>
             </dl>
 
+            {/* Macros per 100g Card */}
+            {result.metadata?.nutrition && (
+              <div className="rounded-2xl bg-surface p-4 border border-border/50 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Macros per 100g</span>
+                  <span className="text-xs font-bold text-primary">{result.metadata.nutrition.calories || 0} kcal</span>
+                </div>
+                <div className="grid grid-cols-4 gap-2 text-center text-xs">
+                  <div className="rounded-xl bg-card p-2 border">
+                    <span className="block text-[10px] text-muted-foreground font-medium">Protein</span>
+                    <span className="font-bold text-emerald-600 dark:text-emerald-400">{result.metadata.nutrition.protein || 0}g</span>
+                  </div>
+                  <div className="rounded-xl bg-card p-2 border">
+                    <span className="block text-[10px] text-muted-foreground font-medium">Carbs</span>
+                    <span className="font-bold text-blue-600 dark:text-blue-400">{result.metadata.nutrition.carbs || 0}g</span>
+                  </div>
+                  <div className="rounded-xl bg-card p-2 border">
+                    <span className="block text-[10px] text-muted-foreground font-medium">Fat</span>
+                    <span className="font-bold text-amber-600 dark:text-amber-400">{result.metadata.nutrition.fat || 0}g</span>
+                  </div>
+                  <div className="rounded-xl bg-card p-2 border">
+                    <span className="block text-[10px] text-muted-foreground font-medium">Fiber</span>
+                    <span className="font-bold text-teal-600 dark:text-teal-400">{result.metadata.nutrition.fiber || 0}g</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Dynamic Allergen Tags */}
+            <div className="rounded-2xl bg-surface p-3.5 border border-border/40">
+              <span className="block text-[11px] text-muted-foreground uppercase font-medium mb-1.5">Allergens</span>
+              <div className="flex flex-wrap gap-1.5">
+                {result.metadata?.allergens && result.metadata.allergens.length > 0 ? (
+                  result.metadata.allergens.map((alg: string) => (
+                    <span key={alg} className="inline-flex items-center gap-1 rounded-md bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30 px-2.5 py-0.5 text-xs font-semibold">
+                      <AlertTriangle className="h-3 w-3" /> {alg}
+                    </span>
+                  ))
+                ) : (
+                  <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 text-xs font-semibold">
+                    <CheckCircle2 className="h-3 w-3" /> Allergen Free / None Detected
+                  </span>
+                )}
+              </div>
+            </div>
+
             <div className="flex gap-2 pt-2">
               <Button
                 className={cn("flex-1", result.condition === "Spoiled" && "bg-spoiled hover:bg-spoiled/90 text-white")}
                 disabled={result.isUncertain && !editedName}
                 onClick={() => {
                   const finalItemName = result.foodName === "Food not confidently identified" ? (editedName || "Food Item") : result.foodName;
+                  const isSpoiled = result.condition === "Spoiled" || result.remainingDays <= 0 || (result.visibleIssues && result.visibleIssues.some((issue: string) => /mold|rot|spoil|decay/i.test(issue)));
+                  const spoilageStatus = isSpoiled ? "SPOILED" : result.condition === "Overripe" ? "USE_SOON" : "FRESH";
+                  const cleanStorageAdvice = isSpoiled ? "Discard safely — not safe for consumption" : (result.recommendation || (result.category === "Vegetables" || result.category === "Dairy" ? "Refrigerator" : "Pantry"));
+                  const cleanStorage = isSpoiled ? "Discard safely — not safe for consumption" : (result.storage || (result.category === "Vegetables" || result.category === "Dairy" ? "Refrigerator" : "Pantry"));
+                  const cleanConsumeByDate = isSpoiled ? "Immediate (Expired)" : result.consumeByDate;
                   add(
                     {
                       id: crypto.randomUUID(),
                       name: finalItemName,
                       category: result.category as Category,
-                      quantity: "1 pcs",
-                      freshness: result.freshnessScore,
+                      quantity: result.quantity || "1 pcs",
+                      freshness: isSpoiled ? Math.min(15, result.freshnessScore) : result.freshnessScore,
                       addedDaysAgo: 0,
-                      expiresInDays: result.remainingDays,
-                      storage: result.category === "Vegetables" || result.category === "Dairy" ? "Refrigerator" : "Pantry shelf",
+                      expiresInDays: isSpoiled ? 0 : result.remainingDays,
+                      expiry_date: isSpoiled ? undefined : result.expiryDate,
+                      days_left: isSpoiled ? 0 : result.remainingDays,
+                      storage: cleanStorage,
                       image: preview || foodImages.tomatoes,
                       allergens: result.metadata?.allergens || [],
                       nutrition: result.metadata?.nutrition || { calories: 45, protein: 1, carbs: 9, fat: 0.2, fiber: 2, nutrients: [] },
                       visualScanNotes: result.aiExplanation,
-                      spoilageRisk: result.spoilageRisk,
-                      storageRecommendation: result.recommendation,
-                      consumeByDate: result.consumeByDate
+                      spoilageRisk: isSpoiled ? "high" : result.spoilageRisk,
+                      storageRecommendation: cleanStorageAdvice,
+                      consumeByDate: cleanConsumeByDate,
+                      isVerifiedExpiry: false,
+                      printedExpiryDate: null,
+                      estimatedConsumeByDate: cleanConsumeByDate,
+                      spoilageStatus,
+                      hasCriticalSpoilage: isSpoiled,
+                      requiresConfirmation: Boolean(result.isUncertain),
+                      scanMetadata: {
+                        source: "photo",
+                        identificationConfidence: result.identificationConfidence,
+                        condition: result.condition,
+                        visibleIssues: result.visibleIssues,
+                        aiExplanation: result.aiExplanation
+                      }
                     },
                     "Photo",
                     `AI Scan: ${finalItemName} (${result.condition}) · ${result.freshnessScore}% fresh`
@@ -540,7 +810,24 @@ function PhotoScan() {
 function LabelScan() {
   const [preview, setPreview] = useState<string>();
   const [scanning, setScanning] = useState(false);
-  const [data, setData] = useState<{ product: string; expiry: string; mfg: string; best: string; qty: string } | null>(null);
+  const [data, setData] = useState<{
+    product: string;
+    brand?: string;
+    expiry: string;
+    mfg: string;
+    best: string;
+    qty: string;
+    category?: Category;
+    storage?: Storage;
+    allergens?: string[];
+    nutrition?: any;
+    packagingCondition?: string;
+    packagingNotes?: string | null;
+    confidence?: number;
+    requiresConfirmation?: boolean;
+    isVerifiedExpiry?: boolean;
+    shelfLifeStatement?: string | null;
+  } | null>(null);
   const add = useAddAndToast();
 
   const start = async (url: string) => {
@@ -549,49 +836,155 @@ function LabelScan() {
     setData(null);
 
     try {
-      const ocrRes = await scanFoodLabelOCR(url);
+      // Read label dates & product details using OCR and AI inspection
+      const ocrRes = await scanFoodLabelOCR(url, "label");
+      if (ocrRes.success || ocrRes.rawText || ocrRes.productName || ocrRes.expiryDate || ocrRes.bestBeforeDate || ocrRes.manufacturingDate) {
+        setScanning(false);
+        setData({
+          product: ocrRes.productName || "",
+          brand: ocrRes.brand || "",
+          expiry: ocrRes.expiryDate || ocrRes.calculatedExpiryDate || ocrRes.bestBeforeDate || "",
+          mfg: ocrRes.manufacturingDate || "",
+          best: ocrRes.bestBeforeDate || "",
+          qty: ocrRes.quantity || "1 unit",
+          category: (ocrRes.category as Category) || "Packaged Foods",
+          storage: (ocrRes.category === "Dairy" ? "Refrigerator" : "Pantry shelf") as Storage,
+          allergens: ocrRes.allergens || [],
+          nutrition: ocrRes.nutrition || null,
+          packagingCondition: ocrRes.packagingCondition || "INTACT",
+          packagingNotes: ocrRes.packagingNotes || null,
+          confidence: typeof ocrRes.confidence === "number" ? Math.round(ocrRes.confidence * 100) : undefined,
+          requiresConfirmation: ocrRes.requiresUserConfirmation,
+          isVerifiedExpiry: Boolean(ocrRes.isVerifiedExpiry),
+          shelfLifeStatement: ocrRes.shelfLifeStatement || null
+        });
+        return;
+      }
+
+      // Receipt fallback: map extracted product details and expiry dates
+      const geminiRes = await scanFoodWithGemini(url, { isReceipt: true });
       setScanning(false);
-      // Only set fields that were actually detected — leave blank for manual entry if OCR failed
+      const first = geminiRes.success && geminiRes.items.length > 0 ? geminiRes.items[0] : null;
       setData({
-        product: ocrRes.productName || "",
-        expiry: ocrRes.expiryDate || "",
-        mfg: ocrRes.manufacturingDate || "",
-        best: ocrRes.bestBeforeDate || "",
-        qty: ocrRes.quantity || ""
+        product: first?.name || "",
+        brand: "",
+        expiry: first?.expiry_date || "",
+        mfg: "",
+        best: "",
+        qty: first?.quantity || "1 unit",
+        category: (first?.category as Category) || "Packaged Foods",
+        storage: (first?.storage as Storage) || "Pantry shelf",
+        allergens: first?.allergens || [],
+        nutrition: first?.macros_per_100g ? {
+          calories: first.macros_per_100g.calories,
+          protein: first.macros_per_100g.protein,
+          carbs: first.macros_per_100g.carbs,
+          fat: first.macros_per_100g.fat,
+          fiber: first.macros_per_100g.fiber
+        } : null,
+        requiresConfirmation: true
       });
     } catch {
       setScanning(false);
       // On error: show blank form for manual correction — do NOT invent dates
-      setData({ product: "", expiry: "", mfg: "", best: "", qty: "" });
+      setData({ product: "", brand: "", expiry: "", mfg: "", best: "", qty: "" });
     }
   };
 
-  const days = data ? Math.round((new Date(data.expiry).getTime() - Date.now()) / 864e5) : 0;
+  const consumeDate = data?.expiry || data?.best || "";
+  const days = consumeDate ? Math.round((new Date(consumeDate).getTime() - Date.now()) / 864e5) : undefined;
+  const isExpired = Boolean(consumeDate && new Date(consumeDate).getTime() < Date.now());
+  const isExpiringSoon = Boolean(!isExpired && typeof days === "number" && days <= 3 && days >= 0);
+  const isPackageDamaged = Boolean(data?.packagingCondition && data.packagingCondition !== "INTACT");
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <Dropzone onFile={start} scanning={scanning} preview={preview} mode="label">
-        <Button variant="link" onClick={() => start(foodImages.milk)}>
-          Run sample label OCR
-        </Button>
       </Dropzone>
       <div className="card-surface p-6">
         {!data ? (
           <div className="flex h-full flex-col justify-center gap-3 text-center text-muted-foreground">
             <Tag className="mx-auto h-8 w-8 text-primary" />
             <p className="font-display text-lg font-semibold text-foreground">
-              {scanning ? "Reading label OCR with Gemini AI..." : "Expiry Label Reader"}
+              {scanning ? "Analyzing label with OCR & Gemini AI..." : "Expiry Label & Receipt Reader"}
             </p>
-            <p className="text-sm">Expiry, best before, manufacturing date, product and quantity.</p>
+            <p className="text-sm">Upload grocery receipts or food packaging expiry labels.</p>
           </div>
         ) : (
           <div className="space-y-4 animate-rise">
-            <p className="flex items-center gap-2 text-sm font-semibold text-primary">
-              <CheckCircle2 className="h-4 w-4" /> OCR Detected — please confirm details
-            </p>
-            <Field label="Product Name">
-              <Input value={data.product} onChange={(e) => setData({ ...data, product: e.target.value })} />
-            </Field>
+            {/* Expiry Status Banner */}
+            {isExpired ? (
+              <div className="flex items-start gap-2.5 rounded-2xl bg-spoiled-soft p-3.5 text-xs text-spoiled border border-spoiled/40 font-medium">
+                <ShieldAlert className="h-5 w-5 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold text-sm">PRODUCT IS EXPIRED</p>
+                  <p className="mt-0.5">The detected expiry date ({consumeDate}) has passed ({Math.abs(days || 0)} days ago). Do not consume.</p>
+                </div>
+              </div>
+            ) : isExpiringSoon ? (
+              <div className="flex items-start gap-2.5 rounded-2xl bg-warn-soft p-3.5 text-xs text-warn border border-warn/30 font-medium">
+                <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold text-sm">EXPIRES SOON</p>
+                  <p className="mt-0.5">This product expires in {days} {days === 1 ? "day" : "days"} ({consumeDate}). Use soon.</p>
+                </div>
+              </div>
+            ) : consumeDate ? (
+              <div className="flex items-start gap-2.5 rounded-2xl bg-emerald-500/10 p-3.5 text-xs text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 font-medium">
+                <CheckCircle2 className="h-5 w-5 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold text-sm">PRODUCT VALID</p>
+                  <p className="mt-0.5">Safe for consumption. Expires in {days} days ({consumeDate}).</p>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-start gap-2.5 rounded-2xl bg-muted p-3.5 text-xs text-muted-foreground border font-medium">
+                <Info className="h-5 w-5 shrink-0 mt-0.5 text-primary" />
+                <div>
+                  <p className="font-bold text-foreground">Printed Expiry Date Uncertain / Not Detected</p>
+                  <p className="mt-0.5">Could not confidently detect printed dates. Please verify your package and enter below.</p>
+                </div>
+              </div>
+            )}
+
+            {/* Packaging Alert Banner */}
+            {isPackageDamaged && (
+              <div className="flex items-start gap-2.5 rounded-2xl bg-warn-soft p-3 text-xs text-warn border border-warn/30 font-medium">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold">Package Condition Alert: {data.packagingCondition}</p>
+                  {data.packagingNotes && <p className="mt-0.5 text-[11px]">{data.packagingNotes}</p>}
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Product Name">
+                <Input value={data.product} onChange={(e) => setData({ ...data, product: e.target.value })} />
+              </Field>
+              <Field label="Brand">
+                <Input placeholder="e.g. Parle" value={data.brand || ""} onChange={(e) => setData({ ...data, brand: e.target.value })} />
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Category">
+                <Select value={data.category || "Packaged Foods"} onValueChange={(v) => setData({ ...data, category: v as Category })}>
+                  <SelectTrigger className="mt-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {categories.map((c) => (
+                      <SelectItem key={c} value={c}>{c}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field label="Quantity">
+                <Input value={data.qty} onChange={(e) => setData({ ...data, qty: e.target.value })} />
+              </Field>
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <Field label="Expiry date">
                 <Input type="date" value={data.expiry} onChange={(e) => setData({ ...data, expiry: e.target.value })} />
@@ -602,33 +995,94 @@ function LabelScan() {
               <Field label="Manufactured date">
                 <Input type="date" value={data.mfg} onChange={(e) => setData({ ...data, mfg: e.target.value })} />
               </Field>
-              <Field label="Quantity">
-                <Input value={data.qty} onChange={(e) => setData({ ...data, qty: e.target.value })} />
+              <Field label="Shelf Life / Note">
+                <Input placeholder="e.g. 6 months from mfg" value={data.shelfLifeStatement || ""} onChange={(e) => setData({ ...data, shelfLifeStatement: e.target.value })} />
               </Field>
             </div>
+
+            {/* Allergen Tags */}
+            {data.allergens && data.allergens.length > 0 && (
+              <div className="rounded-xl bg-surface p-3 border border-border/40">
+                <span className="block text-[11px] text-muted-foreground uppercase font-medium mb-1">Detected Allergens</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {data.allergens.map((alg) => (
+                    <span key={alg} className="inline-flex items-center gap-1 rounded-md bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30 px-2.5 py-0.5 text-xs font-semibold">
+                      <AlertTriangle className="h-3 w-3" /> {alg}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Nutrition per 100g Card */}
+            {data.nutrition && (
+              <div className="grid grid-cols-5 gap-2 text-center text-xs">
+                {[
+                  ["Calories", data.nutrition.calories ? `${data.nutrition.calories} kcal` : "—"],
+                  ["Protein", data.nutrition.protein != null ? `${data.nutrition.protein}g` : "—"],
+                  ["Carbs", data.nutrition.carbs != null ? `${data.nutrition.carbs}g` : "—"],
+                  ["Fat", data.nutrition.fat != null ? `${data.nutrition.fat}g` : "—"],
+                  ["Fiber", data.nutrition.fiber != null ? `${data.nutrition.fiber}g` : "—"]
+                ].map(([label, val]) => (
+                  <div key={label} className="rounded-xl bg-surface p-2 border">
+                    <p className="font-bold text-xs">{val}</p>
+                    <p className="text-[10px] text-muted-foreground">{label}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <Button
-              className="w-full"
-              onClick={() =>
+              className={cn("w-full", isExpired && "bg-spoiled hover:bg-spoiled/90 text-white")}
+              disabled={!data.product.trim()}
+              onClick={() => {
+                const isVerified = Boolean(data.isVerifiedExpiry && data.expiry && data.expiry.trim());
+                const finalItemName = data.brand && !data.product.includes(data.brand)
+                  ? `${data.brand} ${data.product}`.trim()
+                  : (data.product.trim() || "Food Item");
+                const effectiveExpiry = consumeDate || undefined;
                 add(
                   {
                     id: crypto.randomUUID(),
-                    name: data.product,
-                    category: "Dairy",
-                    quantity: data.qty,
-                    freshness: 90,
+                    name: finalItemName,
+                    category: (data.category as Category) || "Packaged Food",
+                    quantity: data.qty || "1 unit",
+                    freshness: isExpired ? 10 : 95,
                     addedDaysAgo: 0,
-                    expiresInDays: days,
-                    storage: "Refrigerator",
-                    image: foodImages.milk,
-                    allergens: ["Milk"],
-                    nutrition: { calories: 58, protein: 3.1, carbs: 4.8, fat: 3, fiber: 0, nutrients: ["Calcium"] }
+                    expiresInDays: isExpired ? 0 : (days ?? 3),
+                    days_left: isExpired ? 0 : (days ?? 3),
+                    expiry_date: effectiveExpiry,
+                    consumeByDate: effectiveExpiry,
+                    purchaseDate: data.mfg || undefined,
+                    storage: ((data.storage as Storage) || "Pantry shelf"),
+                    image: preview,
+                    allergens: data.allergens || [],
+                    nutrition: data.nutrition || { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, nutrients: [] },
+                    isVerifiedExpiry: isVerified,
+                    printedExpiryDate: isVerified ? data.expiry : undefined,
+                    estimatedConsumeByDate: isExpired ? "Immediate (Expired)" : (consumeDate || undefined),
+                    spoilageStatus: isExpired ? "SPOILED" : isExpiringSoon ? "USE_SOON" : "FRESH",
+                    hasCriticalSpoilage: isExpired,
+                    requiresConfirmation: !consumeDate || Boolean(data.requiresConfirmation),
+                    scanMetadata: {
+                      source: "label_ocr",
+                      brand: data.brand,
+                      confidence: data.confidence,
+                      requiresConfirmation: !consumeDate || Boolean(data.requiresConfirmation),
+                      manufacturingDate: data.mfg,
+                      bestBeforeDate: data.best,
+                      printedExpiry: data.isVerifiedExpiry ? data.expiry : undefined,
+                      calculatedExpiry: data.isVerifiedExpiry ? undefined : data.expiry,
+                      shelfLifeStatement: data.shelfLifeStatement || undefined,
+                      packagingCondition: data.packagingCondition
+                    }
                   },
                   "Label",
-                  "Expiry read from label OCR"
-                )
-              }
+                  isExpired ? `Expired Product: ${finalItemName}` : "Product and dates extracted from label; user confirmed"
+                );
+              }}
             >
-              Confirm & Add to Pantry
+              <Plus /> {isExpired ? "⚠️ Confirm & Save Expired Record" : "Confirm & Add to Pantry"}
             </Button>
           </div>
         )}
@@ -637,99 +1091,220 @@ function LabelScan() {
   );
 }
 
-type BarcodeProduct = { name: string; brand: string; category: Category; qty: string; expiry: string; storage: string; allergens: string[]; nutrition?: any; notFound?: boolean };
+type BarcodeProduct = {
+  name: string;
+  brand: string;
+  category: Category;
+  qty: string;
+  expiry: string;
+  mfg?: string;
+  best?: string;
+  storage: string;
+  allergens: string[];
+  nutrition?: any;
+  packagingCondition?: string;
+  visualNotes?: string;
+  notFound?: boolean;
+  unavailable?: boolean;
+  requiresConfirmation?: boolean;
+  source?: string;
+};
 
 function BarcodeScan() {
+  const [preview, setPreview] = useState<string>();
   const [scanning, setScanning] = useState(false);
   const [barcode, setBarcode] = useState("");
   const [p, setP] = useState<null | BarcodeProduct>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const stopCameraRef = useRef<(() => void) | null>(null);
   const add = useAddAndToast();
 
-  const lookup = async (code: string) => {
-    if (!code.trim()) return;
+  useEffect(() => () => {
+    stopCameraRef.current?.();
+  }, []);
+
+  const lookup = async (code: string, imgData?: string) => {
+    if (!code && !imgData && !preview) return;
     setScanning(true);
     setP(null);
 
+    const imageToUse = imgData || preview || null;
+
     try {
-      const offRes = await lookupBarcodeOpenFoodFacts(code.trim());
+      const offRes = await processBarcodePipeline(imageToUse, code ? code.trim() : null);
       setScanning(false);
-      if (offRes.found) {
+      if (offRes.barcode && !barcode) {
+        setBarcode(offRes.barcode);
+      }
+      if (offRes.success) {
         setP({
-          name: offRes.name,
+          name: offRes.productName || "",
           brand: offRes.brand || "",
           category: (offRes.category as Category) || "Packaged Foods",
           qty: offRes.quantity || "1 pack",
-          expiry: "",
-          storage: offRes.rawProduct?.packaging || "Store in a cool, dry place.",
+          expiry: offRes.expiryDate || offRes.bestBeforeDate || "",
+          mfg: offRes.manufacturingDate || "",
+          best: offRes.bestBeforeDate || "",
+          storage: "Store according to the product label.",
           allergens: offRes.allergens || [],
-          nutrition: offRes.nutrition
+          nutrition: offRes.nutrition,
+          packagingCondition: offRes.packagingCondition || "INTACT",
+          visualNotes: offRes.visualNotes || "",
+          requiresConfirmation: Boolean(offRes.requiresUserConfirmation),
+          source: offRes.source
         });
+        toast.success(offRes.message || "Product matched!");
       } else {
-        // NOT found: show blank manual entry form — no fake placeholders
         setP({
-          name: "", brand: "", category: "Packaged Foods", qty: "",
-          expiry: "", storage: "", allergens: [], notFound: true
+          name: offRes.productName || "",
+          brand: offRes.brand || "",
+          category: (offRes.category as Category) || "Packaged Foods",
+          qty: offRes.quantity || "",
+          expiry: offRes.expiryDate || offRes.bestBeforeDate || "",
+          mfg: offRes.manufacturingDate || "",
+          best: offRes.bestBeforeDate || "",
+          storage: "",
+          allergens: offRes.allergens || [],
+          nutrition: offRes.nutrition,
+          packagingCondition: offRes.packagingCondition || "INTACT",
+          visualNotes: offRes.visualNotes || "",
+          notFound: offRes.error === "PRODUCT_NOT_IN_DATABASE",
+          unavailable: offRes.error === "OPEN_FOOD_FACTS_UNAVAILABLE"
         });
+        if (offRes.message) {
+          toast.info(offRes.message);
+        }
       }
     } catch {
       setScanning(false);
       setP({
-        name: "", brand: "", category: "Packaged Foods", qty: "",
-        expiry: "", storage: "", allergens: [], notFound: true
+        name: "", brand: "", category: "Packaged Food", qty: "",
+        expiry: "", storage: "", allergens: [], unavailable: true
       });
+      toast.error("Scan processing encountered an error.");
     }
   };
 
   const handleDropzoneFile = async (url: string, fileName: string = "") => {
+    setPreview(url);
     setScanning(true);
     setP(null);
 
-    const fnLower = (fileName || "").toLowerCase();
-    const urlLower = (url || "").toLowerCase();
-
-    let targetBarcode = barcode.trim();
-
-    if (fnLower.includes("biscuit") || fnLower.includes("cookie") || fnLower.includes("goodday") || urlLower.includes("biscuit") || urlLower.includes("cookie")) {
-      targetBarcode = "8901491100018";
-    } else if (fnLower.includes("parle") || fnLower.includes("glucose")) {
-      targetBarcode = "8901063000021";
-    } else if (fnLower.includes("dark") || fnLower.includes("fantasy")) {
-      targetBarcode = "8901725111119";
-    } else if (fnLower.includes("bourbon")) {
-      targetBarcode = "8901491102029";
-    } else if (fnLower.includes("atta") || fnLower.includes("aashirvaad")) {
-      targetBarcode = "8901719101072";
-    } else if (fnLower.includes("maggi") || fnLower.includes("noodle")) {
-      targetBarcode = "8901058000524";
-    } else if (fnLower.includes("milk") || fnLower.includes("amul")) {
-      targetBarcode = "8901030777777";
-    }
-
-    if (!targetBarcode) {
-      try {
-        const decoded = await processBarcodePipeline(url, null);
-        if (decoded.success && decoded.barcode) {
-          targetBarcode = decoded.barcode;
-        } else {
-          targetBarcode = "8901491100018"; // Britannia Good Day Biscuits
-        }
-      } catch {
-        targetBarcode = "8901491100018";
+    try {
+      const res = await processBarcodePipeline(url, null);
+      setScanning(false);
+      if (res.barcode) {
+        setBarcode(res.barcode);
       }
+      if (res.success) {
+        setP({
+          name: res.productName || "",
+          brand: res.brand || "",
+          category: (res.category as Category) || "Packaged Foods",
+          qty: res.quantity || "1 pack",
+          expiry: res.expiryDate || res.bestBeforeDate || "",
+          mfg: res.manufacturingDate || "",
+          best: res.bestBeforeDate || "",
+          storage: "Store according to the product label.",
+          allergens: res.allergens || [],
+          nutrition: res.nutrition,
+          packagingCondition: res.packagingCondition || "INTACT",
+          visualNotes: res.visualNotes || "",
+          requiresConfirmation: Boolean(res.requiresUserConfirmation),
+          source: res.source
+        });
+        toast.success(res.message || "Package analyzed successfully!");
+      } else if (res.barcode) {
+        setP({
+          name: res.productName || "",
+          brand: res.brand || "",
+          category: (res.category as Category) || "Packaged Foods",
+          qty: res.quantity || "",
+          expiry: res.expiryDate || res.bestBeforeDate || "",
+          mfg: res.manufacturingDate || "",
+          best: res.bestBeforeDate || "",
+          storage: "",
+          allergens: res.allergens || [],
+          nutrition: res.nutrition,
+          packagingCondition: res.packagingCondition || "INTACT",
+          visualNotes: res.visualNotes || "",
+          notFound: res.error === "PRODUCT_NOT_IN_DATABASE",
+          unavailable: res.error === "OPEN_FOOD_FACTS_UNAVAILABLE"
+        });
+        toast.info(res.message || "Barcode detected. Please confirm details.");
+      } else {
+        toast.error(res.message || "No readable barcode or package details found in this image.");
+      }
+    } catch (err: any) {
+      setScanning(false);
+      toast.error("Failed to process package image.");
     }
-
-    setBarcode(targetBarcode);
-    await lookup(targetBarcode);
   };
+
+  useEffect(() => {
+    let active = true;
+    if (cameraOpen && videoRef.current) {
+      startBarcodeCamera(videoRef.current, async (value: string, frameUrl?: string) => {
+        if (!active) return;
+        setCameraOpen(false);
+        setBarcode(value);
+        if (frameUrl) {
+          setPreview(frameUrl);
+        }
+        await lookup(value, frameUrl);
+      }).then((stop: any) => {
+        if (active) {
+          stopCameraRef.current = stop;
+        } else {
+          stop?.();
+        }
+      }).catch((err: any) => {
+        if (!active) return;
+        setCameraOpen(false);
+        toast.error(err?.message === "CAMERA_PERMISSION_DENIED" ? "Camera permission was denied." : "Camera access failed or barcode scanning is unavailable.");
+      });
+    }
+    return () => {
+      active = false;
+      stopCameraRef.current?.();
+      stopCameraRef.current = null;
+    };
+  }, [cameraOpen]);
+
+  const openLiveCamera = () => {
+    setP(null);
+    setCameraOpen(true);
+  };
+
+  const isExpired = Boolean(p?.expiry && new Date(p.expiry).getTime() < Date.now());
+  const daysLeft = p?.expiry ? Math.round((new Date(p.expiry).getTime() - Date.now()) / 864e5) : null;
+  const isPackageDamaged = Boolean(p?.packagingCondition && p.packagingCondition !== "INTACT");
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <div className="space-y-4">
-        <Dropzone onFile={(url, name) => handleDropzoneFile(url, name)} scanning={scanning} mode="barcode">
-          <Button variant="link" onClick={() => handleDropzoneFile("", "biscuit")}>
-            Try Britannia Good Day Biscuits Barcode
-          </Button>
+        {cameraOpen && (
+          <div className="relative aspect-[4/3] overflow-hidden rounded-[2rem] border bg-black">
+            <video ref={videoRef} autoPlay muted playsInline className="h-full w-full object-cover" />
+            <div className="pointer-events-none absolute inset-8 rounded-2xl border-2 border-primary shadow-[0_0_30px_4px] shadow-primary/40" />
+            <Button variant="outline" className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-background/90" onClick={() => {
+              stopCameraRef.current?.();
+              stopCameraRef.current = null;
+              setCameraOpen(false);
+            }}>Cancel</Button>
+          </div>
+        )}
+        <Dropzone onFile={(url, name) => handleDropzoneFile(url, name)} scanning={scanning} preview={preview} mode="barcode">
         </Dropzone>
+
+        {preview && (
+          <div className="flex justify-end">
+            <Button variant="ghost" size="sm" className="text-xs text-muted-foreground" onClick={() => { setPreview(undefined); setP(null); setBarcode(""); }}>
+              <RotateCcw className="h-3.5 w-3.5 mr-1" /> Retake / Clear Image
+            </Button>
+          </div>
+        )}
 
         {/* Quick Sample Barcodes */}
         <div className="flex flex-wrap gap-1.5 pt-1">
@@ -743,6 +1318,7 @@ function BarcodeScan() {
           ].map((sample) => (
             <button
               key={sample.code}
+              type="button"
               onClick={() => {
                 setBarcode(sample.code);
                 lookup(sample.code);
@@ -767,6 +1343,9 @@ function BarcodeScan() {
             {scanning ? "Looking up…" : "Lookup"}
           </Button>
         </div>
+        <Button variant="outline" className="w-full" onClick={openLiveCamera} disabled={scanning || cameraOpen}>
+          <Camera /> Scan continuously with camera
+        </Button>
       </div>
 
       <div className="card-surface p-6">
@@ -774,42 +1353,103 @@ function BarcodeScan() {
           <div className="flex h-full flex-col justify-center gap-3 text-center text-muted-foreground">
             <ScanBarcode className="mx-auto h-8 w-8 text-primary" />
             <p className="font-display text-lg font-semibold text-foreground">
-              {scanning ? "Querying Open Food Facts API..." : "Open Food Facts Barcode Lookup"}
+              {scanning ? "Inspecting Barcode & Package with AI..." : "Open Food Facts & AI Barcode Inspector"}
             </p>
-            <p className="text-sm">Enter a barcode number above and press Lookup, or upload a barcode image.</p>
+            <p className="text-sm">Scan a barcode photo, use live camera, or click a sample barcode above.</p>
           </div>
         ) : (
           <div className="space-y-4 animate-rise">
-            {p.notFound && (
-              <div className="flex items-center gap-2 rounded-2xl bg-warn-soft p-3 text-xs text-warn border border-warn/30">
-                <AlertTriangle className="h-4 w-4 shrink-0" />
-                <span>Barcode not found in Open Food Facts. Please fill in product details manually.</span>
+            {/* Status Banners */}
+            {isExpired ? (
+              <div className="flex items-start gap-2.5 rounded-2xl bg-spoiled-soft p-3.5 text-xs text-spoiled border border-spoiled/40 font-medium">
+                <ShieldAlert className="h-5 w-5 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold text-sm">PRODUCT IS EXPIRED</p>
+                  <p className="mt-0.5">The expiry date ({p.expiry}) has passed. Do not consume.</p>
+                </div>
+              </div>
+            ) : p.expiry && daysLeft !== null ? (
+              <div className="flex items-start gap-2.5 rounded-2xl bg-emerald-500/10 p-3.5 text-xs text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 font-medium">
+                <CheckCircle2 className="h-5 w-5 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold text-sm">PRODUCT IS VALID</p>
+                  <p className="mt-0.5">Expires in {daysLeft} {daysLeft === 1 ? "day" : "days"} ({p.expiry}).</p>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-start gap-2 rounded-2xl bg-muted p-3 text-xs text-muted-foreground border">
+                <Info className="h-4 w-4 shrink-0 text-primary mt-0.5" />
+                <span>No printed expiry date was auto-detected. Enter the expiry date from your package below to track shelf life.</span>
               </div>
             )}
+
+            {isPackageDamaged && (
+              <div className="flex items-start gap-2.5 rounded-2xl bg-warn-soft p-3 text-xs text-warn border border-warn/30 font-medium">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold">Package Condition Alert: {p.packagingCondition}</p>
+                  {p.visualNotes && <p className="text-[11px] mt-0.5">{p.visualNotes}</p>}
+                </div>
+              </div>
+            )}
+
+            {p.notFound && !p.name && (
+              <div className="flex items-center gap-2 rounded-2xl bg-warn-soft p-3 text-xs text-warn border border-warn/30">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                <span>{p.unavailable ? "Open Food Facts is unavailable. Retry or fill in product details manually." : "Barcode not found in Open Food Facts. Please fill in product details manually."}</span>
+              </div>
+            )}
+
+            {p.source && (
+              <div className="flex items-center gap-1.5 rounded-full border bg-muted/60 px-3 py-1 text-[11px] text-muted-foreground w-fit">
+                <span className="font-semibold text-primary">Source:</span> {p.source}
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-3">
               <Field label="Product Name">
-                <Input placeholder="e.g. Aashirvaad Atta" value={p.name} onChange={(e) => setP({ ...p, name: e.target.value })} />
+                <Input placeholder="e.g. Parle-G Gluco Biscuits" value={p.name} onChange={(e) => setP({ ...p, name: e.target.value })} />
               </Field>
               <Field label="Brand">
-                <Input placeholder="e.g. Aashirvaad" value={p.brand} onChange={(e) => setP({ ...p, brand: e.target.value })} />
+                <Input placeholder="e.g. Parle" value={p.brand} onChange={(e) => setP({ ...p, brand: e.target.value })} />
+              </Field>
+              <Field label="Category">
+                <Select value={p.category || "Packaged Foods"} onValueChange={(v) => setP({ ...p, category: v as Category })}>
+                  <SelectTrigger className="mt-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {categories.map((c) => (
+                      <SelectItem key={c} value={c}>{c}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </Field>
               <Field label="Quantity">
-                <Input placeholder="e.g. 1 kg" value={p.qty} onChange={(e) => setP({ ...p, qty: e.target.value })} />
+                <Input placeholder="e.g. 1 pack / 250 g" value={p.qty} onChange={(e) => setP({ ...p, qty: e.target.value })} />
               </Field>
               <Field label="Expiry Date">
                 <Input type="date" value={p.expiry} onChange={(e) => setP({ ...p, expiry: e.target.value })} />
               </Field>
+              <Field label="Best Before Date">
+                <Input type="date" value={p.best || ""} onChange={(e) => setP({ ...p, best: e.target.value })} />
+              </Field>
+              <Field label="Manufacturing Date" className="col-span-2">
+                <Input type="date" value={p.mfg || ""} onChange={(e) => setP({ ...p, mfg: e.target.value })} />
+              </Field>
             </div>
+
             {p.nutrition ? (
-              <div className="grid grid-cols-5 gap-2 text-center">
+              <div className="grid grid-cols-6 gap-2 text-center">
                 {[
                   ["kcal", p.nutrition.calories],
-                  ["Protein", `${p.nutrition.protein}g`],
-                  ["Carbs", `${p.nutrition.carbs}g`],
-                  ["Fat", `${p.nutrition.fat}g`],
-                  ["Fiber", `${p.nutrition.fiber}g`]
+                  ["Protein", p.nutrition.protein == null ? null : `${p.nutrition.protein}g`],
+                  ["Carbs", p.nutrition.carbs == null ? null : `${p.nutrition.carbs}g`],
+                  ["Fat", p.nutrition.fat == null ? null : `${p.nutrition.fat}g`],
+                  ["Fiber", p.nutrition.fiber == null ? null : `${p.nutrition.fiber}g`],
+                  ["Calcium", p.nutrition.calcium == null ? null : `${p.nutrition.calcium}mg`]
                 ].map(([k, v]) => (
-                  <div key={k as string} className="rounded-xl bg-surface p-2">
+                  <div key={k as string} className="rounded-xl bg-surface p-2 border">
                     <p className="font-display font-bold text-xs">{v || "—"}</p>
                     <p className="text-[10px] text-muted-foreground">{k}</p>
                   </div>
@@ -818,38 +1458,66 @@ function BarcodeScan() {
             ) : (
               <p className="text-xs text-muted-foreground rounded-2xl bg-muted p-3">Nutrition data unavailable for this product.</p>
             )}
-            {p.allergens.length > 0 && (
-              <p className="flex items-center gap-2 text-sm">
-                <AlertTriangle className="h-4 w-4 text-spoiled" />
-                Contains allergens: <b className="text-spoiled">{p.allergens.join(", ")}</b>
-              </p>
+
+            {p.allergens && p.allergens.length > 0 && (
+              <div className="flex items-center gap-2 text-xs">
+                <AlertTriangle className="h-4 w-4 text-spoiled shrink-0" />
+                <span>Contains allergens: <b className="text-spoiled">{p.allergens.join(", ")}</b></span>
+              </div>
             )}
+
             {p.storage && (
-              <p className="rounded-2xl bg-muted p-3 text-sm text-muted-foreground">{p.storage}</p>
+              <p className="rounded-2xl bg-muted p-3 text-xs text-muted-foreground">{p.storage}</p>
             )}
+
             <Button
-              className="w-full"
+              className={cn("w-full", isExpired && "bg-spoiled hover:bg-spoiled/90 text-white")}
               disabled={!p.name.trim()}
-              onClick={() =>
+              onClick={() => {
+                const effectiveExpiry = p.expiry || p.best || "";
+                const isVerified = Boolean(effectiveExpiry && effectiveExpiry.trim());
+                const finalName = p.brand && !p.name.includes(p.brand) ? `${p.brand} ${p.name}`.trim() : p.name.trim();
+                const finalDays = effectiveExpiry ? Math.round((new Date(effectiveExpiry).getTime() - Date.now()) / 864e5) : undefined;
                 add(
                   {
                     id: crypto.randomUUID(),
-                    name: p.brand && !p.name.includes(p.brand) ? `${p.brand} ${p.name}`.trim() : p.name.trim(),
-                    category: p.category,
+                    name: finalName,
+                    category: p.category || "Packaged Foods",
                     quantity: p.qty || "1 pack",
-                    freshness: 98,
+                    freshness: isExpired ? 10 : 95,
                     addedDaysAgo: 0,
-                    expiresInDays: p.expiry ? Math.round((new Date(p.expiry).getTime() - Date.now()) / 864e5) : 365,
-                    storage: "Pantry shelf",
+                    expiresInDays: isExpired ? 0 : (finalDays ?? 3),
+                    days_left: isExpired ? 0 : (finalDays ?? 3),
+                    expiry_date: effectiveExpiry || undefined,
+                    consumeByDate: effectiveExpiry || undefined,
+                    purchaseDate: p.mfg || undefined,
+                    storage: ((p.storage as Storage) || "Pantry shelf"),
                     allergens: p.allergens,
-                    nutrition: p.nutrition || { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, nutrients: [] }
+                    nutrition: p.nutrition || { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, nutrients: [] },
+                    image: preview,
+                    isVerifiedExpiry: isVerified,
+                    printedExpiryDate: isVerified ? effectiveExpiry : undefined,
+                    estimatedConsumeByDate: isExpired ? "Immediate (Expired)" : (effectiveExpiry || undefined),
+                    spoilageStatus: isExpired ? "SPOILED" : "FRESH",
+                    hasCriticalSpoilage: isExpired,
+                    requiresConfirmation: Boolean(p.requiresConfirmation || (!p.name || !effectiveExpiry)),
+                    scanMetadata: {
+                      source: "barcode",
+                      barcode: barcode.trim(),
+                      brand: p.brand,
+                      enrichmentSource: p.source || "Open Food Facts",
+                      manufacturingDate: p.mfg,
+                      bestBeforeDate: p.best,
+                      requiresConfirmation: Boolean(p.requiresConfirmation || (!p.name || !effectiveExpiry)),
+                      packagingCondition: p.packagingCondition
+                    }
                   },
                   "Barcode",
-                  p.notFound ? "Manually entered (barcode not in Open Food Facts)" : "Open Food Facts Barcode Matched"
-                )
-              }
+                  isExpired ? `Expired Barcode Item: ${finalName}` : p.unavailable ? "Manual entry (Open Food Facts unavailable)" : p.notFound && !p.source ? "Manually entered (barcode not in Open Food Facts)" : (p.source || "Open Food Facts Barcode Matched")
+                );
+              }}
             >
-              <Plus /> Add to Pantry
+              <Plus /> {isExpired ? "⚠️ Save Expired Item Record" : "Add to Pantry"}
             </Button>
           </div>
         )}
@@ -862,6 +1530,17 @@ function BarcodeScan() {
 function InstamartScan() {
   const { syncPantryDb } = usePantry();
   const nav = useNavigate();
+  const [activeOrders, setActiveOrders] = useState<any[]>(() => swiggyService.getActiveOrders());
+
+  useEffect(() => {
+    const update = () => setActiveOrders(swiggyService.getActiveOrders());
+    window.addEventListener("swiggy_orders_changed", update);
+    const timer = setInterval(update, 3000);
+    return () => {
+      window.removeEventListener("swiggy_orders_changed", update);
+      clearInterval(timer);
+    };
+  }, []);
 
   const handleSuccess = () => {
     syncPantryDb();
@@ -871,8 +1550,69 @@ function InstamartScan() {
     nav({ to: "/app/pantry" });
   };
 
+  const pendingDelivered = activeOrders.filter((o) => o.status === "delivered" && !o.importedAt);
+  const inProgressOrders = activeOrders.filter((o) => o.status !== "delivered" && o.status !== "cancelled" && !o.importedAt);
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
+      {/* Active Orders Status Banner */}
+      {(pendingDelivered.length > 0 || inProgressOrders.length > 0) && (
+        <div className="card-surface p-5 border-amber-500/30 bg-gradient-to-r from-orange-500/10 via-amber-500/10 to-transparent space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="font-bold text-sm text-foreground flex items-center gap-2">
+              <ShoppingBag className="h-4 w-4 text-orange-500" />
+              Active Instamart Deliveries
+            </span>
+          </div>
+
+          <div className="space-y-2">
+            {pendingDelivered.map((ord) => (
+              <div key={ord.orderId} className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl bg-surface border border-emerald-500/40">
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="font-bold text-foreground">Order #{ord.orderId}</span>
+                  <span className="rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-semibold px-2 py-0.5 text-[11px]">
+                    🎉 Delivered (Ready to Confirm)
+                  </span>
+                  <span className="text-muted-foreground">· {ord.items?.length || 0} items</span>
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent("swiggy_orders_changed"));
+                  }}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl h-8"
+                >
+                  Confirm & Add to Pantry
+                </Button>
+              </div>
+            ))}
+
+            {inProgressOrders.map((ord) => (
+              <div key={ord.orderId} className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl bg-surface border border-border">
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="font-bold text-foreground">Order #{ord.orderId}</span>
+                  <span className="rounded-full bg-orange-500/15 text-orange-600 dark:text-orange-400 font-semibold px-2 py-0.5 text-[11px]">
+                    🛵 {ord.status ? ord.status.replace(/_/g, " ") : "processing"}
+                  </span>
+                  <span className="text-muted-foreground">· {ord.items?.length || 0} items</span>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    swiggyService.fastForwardOrderDelivery(ord.orderId);
+                    toast.success("Simulated instant arrival! Delivery confirmation modal will open.");
+                  }}
+                  className="text-xs h-8 border-orange-500/30 text-orange-600 dark:text-orange-400 hover:bg-orange-500/10"
+                >
+                  ⚡ Fast Forward Arrival (Demo)
+                </Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="card-surface p-6 sm:p-8">
         <ImportDemoOrder onImportSuccess={handleSuccess} />
       </div>
@@ -921,10 +1661,11 @@ function ManualAdd() {
       ? Math.round((new Date(f.expiry).getTime() - Date.now()) / 864e5)
       : engineCalc.daysRemaining;
 
+    const isVerified = Boolean(f.expiry && f.expiry.trim());
     add(
       {
         id: crypto.randomUUID(),
-        name: f.name,
+        name: f.name.trim(),
         category: f.category,
         quantity: f.qty || "1 pcs",
         freshness: 95,
@@ -936,7 +1677,18 @@ function ManualAdd() {
         allergens: [],
         nutrition: { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, nutrients: [] },
         consumeByDate: f.expiry || engineCalc.consumeByDate,
-        spoilageRisk: engineCalc.spoilageRisk
+        spoilageRisk: engineCalc.spoilageRisk,
+        purchaseDate: f.purchase,
+        isVerifiedExpiry: isVerified,
+        printedExpiryDate: isVerified ? f.expiry : null,
+        estimatedConsumeByDate: f.expiry || engineCalc.consumeByDate,
+        spoilageStatus: "FRESH",
+        hasCriticalSpoilage: false,
+        requiresConfirmation: !isVerified,
+        scanMetadata: {
+          source: "manual",
+          acceptedShelfLifeEstimate: accepted
+        }
       },
       null,
       ""

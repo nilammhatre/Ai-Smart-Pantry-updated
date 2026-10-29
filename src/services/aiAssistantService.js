@@ -53,11 +53,11 @@ export async function queryPantryAssistant(userQuery = "", pantryItems = [], sho
   const expiringItems = safePantryContext.filter(i => i.daysRemaining <= 3).sort((a, b) => a.daysRemaining - b.daysRemaining);
 
   const apiKey = getGeminiApiKey();
-  const isValidApiKey = Boolean(apiKey && apiKey.startsWith("AIzaSy") && apiKey.length > 20);
+  const isValidApiKey = Boolean(apiKey && apiKey.length > 5);
 
   if (isValidApiKey) {
     try {
-      console.log(`[PantryAssistant] 🤖 Processing query with Gemini API...`);
+      console.log(`[PantryAssistant] 🤖 Processing query with Gemini 2.5 Flash API...`);
 
       const systemContext = `You are "Pantry AI", an intelligent, empathetic, zero-waste kitchen assistant.
 Context about the user's current food pantry:
@@ -74,12 +74,17 @@ ${safeShoppingContext.map(s => `- ${s}`).join("\n") || "None"}
 USER QUESTION: "${cleanQuery}"
 
 INSTRUCTIONS:
-1. Provide a direct, helpful, and concise response focusing on practical food safety, recipe ideas, shopping tips, and waste reduction.
-2. Use markdown formatting (bolding key items).
-3. Always prioritize using foods that are expiring soon.
-4. DO NOT make unsafe claims about questionable or spoiled food.`;
+1. Provide a direct, helpful, and concise response focusing on practical food safety, zero-waste recipe ideas, shopping tips, and waste reduction.
+2. If the user asks for recipes, what to cook, or what to eat, PRIORITIZE ingredients expiring in <= 3 days to eliminate kitchen waste. Structure recipes clearly with:
+   - **Title**
+   - **Prep Time**
+   - **Ingredients Used from Pantry**
+   - **Missing Pantry Staples**
+   - **Quick Instructions** (step-by-step)
+3. Use markdown formatting (bolding key ingredients).
+4. Tone: Warm, practical, encouraging, and zero-waste focused.`;
 
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

@@ -12,6 +12,7 @@ import { useEffect, type ReactNode } from "react";
 
 import { PantryProvider } from "@/lib/pantry-store";
 import { Toaster } from "@/components/ui/sonner";
+import { InstamartDeliveryModal } from "@/components/pantry/InstamartDeliveryModal";
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 
@@ -126,17 +127,19 @@ function RootComponent() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (window.location.pathname.startsWith("/app/shopping")) return;
+
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get("code") || urlParams.get("auth_code");
     if (code) {
+      window.history.replaceState({}, document.title, window.location.pathname);
       swiggyService.handleCallback(code).then(() => {
         toast.success("Successfully connected to Swiggy Instamart via OAuth 2.1 PKCE!", {
           description: "Your live Swiggy account is active for order imports and cart synchronization."
         });
-        const cleanUrl = window.location.pathname;
-        window.history.replaceState({}, document.title, cleanUrl);
-      }).catch((err: any) => {
-        toast.error(`Swiggy OAuth Callback error: ${err.message}`);
+      }).catch(() => {
+        toast.info("Swiggy partner approval pending (Local Application isn't whitelisted yet). Using Instamart Simulation Mode.");
+        swiggyService.setMode("mock");
       });
     }
   }, []);
@@ -148,6 +151,7 @@ function RootComponent() {
         <PantryProvider>
           <Outlet />
           <Toaster position="top-center" richColors />
+          <InstamartDeliveryModal />
         </PantryProvider>
       </AuthProvider>
     </QueryClientProvider>

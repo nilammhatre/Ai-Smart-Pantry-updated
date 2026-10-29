@@ -1,0 +1,38 @@
+{
+  "class_to_idx": {
+    "apple": 0,
+    "banana": 1,
+    "brinjal": 2,
+    "cabbage": 3,
+    "capsicum": 4,
+    "carrot": 5,
+    "cucumber": 6,
+    "garlic": 7,
+    "ginger": 8,
+    "mango": 9,
+    "onion": 10,
+    "orange": 11,
+    "pomegranate": 12,
+    "potato": 13,
+    "spinach": 14,
+    "tomato": 15
+  },
+  "idx_to_class": {
+    "0": "apple",
+    "1": "banana",
+    "2": "brinjal",
+    "3": "cabbage",
+    "4": "capsicum",
+    "5": "carrot",
+    "6": "cucumber",
+    "7": "garlic",
+    "8": "ginger",
+    "9": "mango",
+    "10": "onion",
+    "11": "orange",
+    "12": "pomegranate",
+    "13": "potato",
+    "14": "spinach",
+    "15": "tomato"
+  }
+}

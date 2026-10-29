@@ -18,8 +18,8 @@ export type Category =
   | "Fruits" | "Vegetables" | "Dairy" | "Meat" | "Fish" | "Grains" | "Packaged Food" | "Other";
 export const categories: Category[] = ["Fruits", "Vegetables", "Dairy", "Meat", "Fish", "Grains", "Packaged Food", "Other"];
 
-export type Storage = "Refrigerator" | "Freezer" | "Pantry shelf" | "Counter";
-export type Status = "Fresh" | "Good" | "Use Soon" | "Spoiled";
+export type Storage = "Refrigerator" | "Freezer" | "Pantry shelf" | "Counter" | "Pantry";
+export type Status = "Fresh" | "Good" | "Use Soon" | "Expired" | "Spoiled";
 
 export interface Nutrition { calories: number; protein: number; carbs: number; fat: number; fiber: number; nutrients: string[] }
 
@@ -42,18 +42,101 @@ export interface PantryItem {
   calendarEventId?: string;
   googleCalendarId?: string;
   calendarSyncStatus?: string;
+  calendarLastSyncedAt?: string;
+  googleCalendarError?: string;
   calendarHtmlLink?: string;
   whatsappMessageId?: string;
   whatsappStatus?: string;
+  whatsappLastSentAt?: string;
   lastAiScanAt?: string;
   visualScanNotes?: string;
   consumeByDate?: string;
+  purchaseDate?: string;
+  printedExpiryDate?: string | null;
+  estimatedConsumeByDate?: string;
+  isVerifiedExpiry?: boolean;
+  spoilageStatus?: string;
   spoilageRisk?: string;
+  hasCriticalSpoilage?: boolean;
+  requiresConfirmation?: boolean;
   storageRecommendation?: string;
+  nextAlertDate?: string | null;
+  scanMetadata?: any;
+  status?: "active" | "consumed" | "discarded" | string;
+  expiry_date?: string;
+  days_left?: number;
+}
+
+export type ExpiryCategory = "Expired Items" | "Expiring Today" | "Expiring in 1–3 Days" | "Fresh Stock";
+
+/**
+ * Deterministic Expiry Calculation:
+ * Calculate days_left = Math.ceil((new Date(item.expiry_date) - new Date()) / 86400000)
+ */
+export function calculateDaysLeft(expiryDateStr?: string | null, fallbackDays?: number): number {
+  if (!expiryDateStr) return typeof fallbackDays === "number" ? fallbackDays : 3;
+  try {
+    const expDate = new Date(expiryDateStr.includes("T") ? expiryDateStr : `${expiryDateStr}T23:59:59`);
+    const now = new Date();
+    const diff = Math.ceil((expDate.getTime() - now.getTime()) / 86400000);
+    return isNaN(diff) ? (typeof fallbackDays === "number" ? fallbackDays : 3) : diff;
+  } catch {
+    return typeof fallbackDays === "number" ? fallbackDays : 3;
+  }
+}
+
+export function getDeterministicDaysLeft(item: { expiry_date?: string; consumeByDate?: string; expiresInDays?: number; days_left?: number }): number {
+  if (item.expiry_date) {
+    return calculateDaysLeft(item.expiry_date, item.expiresInDays);
+  }
+  if (item.consumeByDate) {
+    return calculateDaysLeft(item.consumeByDate, item.expiresInDays);
+  }
+  if (typeof item.days_left === "number" && !isNaN(item.days_left)) {
+    return item.days_left;
+  }
+  return typeof item.expiresInDays === "number" ? item.expiresInDays : 3;
+}
+
+export function getExpiryCategory(daysLeft: number): ExpiryCategory {
+  if (daysLeft < 0) return "Expired Items";
+  if (daysLeft === 0) return "Expiring Today";
+  if (daysLeft <= 3) return "Expiring in 1–3 Days";
+  return "Fresh Stock";
+}
+
+export function getExpiryBadge(daysLeft: number): { text: string; color: string; badgeClass: string } {
+  if (daysLeft < 0) {
+    return {
+      text: "Expired (Discard)",
+      color: "red",
+      badgeClass: "bg-red-500/15 text-red-700 dark:text-red-400 border border-red-500/30"
+    };
+  }
+  if (daysLeft === 0) {
+    return {
+      text: "Use Immediately",
+      color: "orange",
+      badgeClass: "bg-orange-500/15 text-orange-700 dark:text-orange-400 border border-orange-500/30"
+    };
+  }
+  if (daysLeft <= 3) {
+    return {
+      text: "Expiring in 1–3 Days",
+      color: "amber",
+      badgeClass: "bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30"
+    };
+  }
+  return {
+    text: "Fresh Stock",
+    color: "emerald",
+    badgeClass: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30"
+  };
 }
 
 export function statusFor(freshness: number, days: number): Status {
-  if (days < 0 || freshness < 30) return "Spoiled";
+  if (days < 0) return "Expired";
+  if (freshness < 30) return "Spoiled";
   if (days <= 2 || freshness < 60) return "Use Soon";
   if (freshness < 85) return "Good";
   return "Fresh";
@@ -65,9 +148,15 @@ export function dateFromNow(days: number) {
   return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 }
 
+export function dateToIso(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split("T")[0];
+}
+
 export function daysLabel(days: number) {
   if (days < 0) return `Expired ${Math.abs(days)}d ago`;
-  if (days === 0) return "Use today";
+  if (days === 0) return "Expires today (Use now)";
   if (days === 1) return "1 day left";
   return `${days} days left`;
 }
@@ -76,18 +165,18 @@ const n = (calories: number, protein: number, carbs: number, fat: number, fiber:
   ({ calories, protein, carbs, fat, fiber, nutrients });
 
 export const seedPantry: PantryItem[] = [
-  { id: "tomatoes", name: "Tomatoes", category: "Vegetables", quantity: "6 pcs", freshness: 92, addedDaysAgo: 2, expiresInDays: 3, storage: "Counter", image: tomatoes, allergens: [], nutrition: n(18, 0.9, 3.9, 0.2, 1.2, ["Vitamin C", "Lycopene", "Potassium"]), reminder: true },
-  { id: "milk", name: "Amul Toned Milk", category: "Dairy", quantity: "1 litre", freshness: 74, addedDaysAgo: 3, expiresInDays: 2, storage: "Refrigerator", image: milk, allergens: ["Milk"], nutrition: n(58, 3.1, 4.8, 3, 0, ["Calcium", "Vitamin B12", "Vitamin D"]), reminder: true },
-  { id: "spinach", name: "Spinach", category: "Vegetables", quantity: "1 bunch", freshness: 58, addedDaysAgo: 4, expiresInDays: 0, storage: "Refrigerator", image: spinach, allergens: [], nutrition: n(23, 2.9, 3.6, 0.4, 2.2, ["Iron", "Vitamin K", "Folate"]) },
-  { id: "apples", name: "Shimla Apples", category: "Fruits", quantity: "4 pcs", freshness: 94, addedDaysAgo: 1, expiresInDays: 6, storage: "Refrigerator", image: apples, allergens: [], nutrition: n(52, 0.3, 14, 0.2, 2.4, ["Vitamin C", "Polyphenols"]) },
-  { id: "bananas", name: "Bananas", category: "Fruits", quantity: "5 pcs", freshness: 66, addedDaysAgo: 3, expiresInDays: 1, storage: "Counter", image: bananas, allergens: [], nutrition: n(89, 1.1, 23, 0.3, 2.6, ["Potassium", "Vitamin B6"]) },
-  { id: "rice", name: "Basmati Rice", category: "Grains", quantity: "500 g", freshness: 98, addedDaysAgo: 20, expiresInDays: 120, storage: "Pantry shelf", image: rice, allergens: [], nutrition: n(130, 2.7, 28, 0.3, 0.4, ["Manganese", "Selenium"]), lowStock: true },
-  { id: "paneer", name: "Fresh Paneer", category: "Dairy", quantity: "200 g", freshness: 81, addedDaysAgo: 2, expiresInDays: 3, storage: "Refrigerator", image: paneer, allergens: ["Milk"], nutrition: n(265, 18, 1.2, 20, 0, ["Calcium", "Protein"]) },
-  { id: "eggs", name: "Farm Eggs", category: "Other", quantity: "8 pcs", freshness: 88, addedDaysAgo: 5, expiresInDays: 9, storage: "Refrigerator", image: eggs, allergens: ["Eggs"], nutrition: n(155, 13, 1.1, 11, 0, ["Vitamin B12", "Choline"]) },
-  { id: "potatoes", name: "Potatoes", category: "Vegetables", quantity: "1 kg", freshness: 90, addedDaysAgo: 6, expiresInDays: 14, storage: "Pantry shelf", image: potatoes, allergens: [], nutrition: n(77, 2, 17, 0.1, 2.2, ["Vitamin C", "Potassium"]) },
-  { id: "bread", name: "Whole Wheat Bread", category: "Packaged Food", quantity: "½ loaf", freshness: 22, addedDaysAgo: 6, expiresInDays: -1, storage: "Counter", allergens: ["Gluten", "Soy"], nutrition: n(247, 13, 41, 3.4, 7, ["Fiber", "Iron"]) },
-  { id: "curd", name: "Homemade Curd", category: "Dairy", quantity: "400 g", freshness: 70, addedDaysAgo: 2, expiresInDays: 4, storage: "Refrigerator", allergens: ["Milk"], nutrition: n(61, 3.5, 4.7, 3.3, 0, ["Probiotics", "Calcium"]) },
-  { id: "almonds", name: "Almonds", category: "Packaged Food", quantity: "250 g", freshness: 96, addedDaysAgo: 10, expiresInDays: 90, storage: "Pantry shelf", allergens: ["Nuts"], nutrition: n(579, 21, 22, 50, 12.5, ["Vitamin E", "Magnesium"]) },
+  { id: "tomatoes", name: "Tomatoes", category: "Vegetables", quantity: "6 pcs", freshness: 92, addedDaysAgo: 2, expiresInDays: 3, days_left: 3, expiry_date: dateToIso(3), consumeByDate: dateToIso(3), storage: "Counter", image: tomatoes, allergens: [], nutrition: n(18, 0.9, 3.9, 0.2, 1.2, ["Vitamin C", "Lycopene", "Potassium"]), reminder: true, isVerifiedExpiry: false },
+  { id: "milk", name: "Amul Toned Milk", category: "Dairy", quantity: "1 litre", freshness: 74, addedDaysAgo: 3, expiresInDays: 2, days_left: 2, expiry_date: dateToIso(2), consumeByDate: dateToIso(2), storage: "Refrigerator", image: milk, allergens: ["Milk"], nutrition: n(58, 3.1, 4.8, 3, 0, ["Calcium", "Vitamin B12", "Vitamin D"]), reminder: true, isVerifiedExpiry: true },
+  { id: "spinach", name: "Spinach", category: "Vegetables", quantity: "1 bunch", freshness: 58, addedDaysAgo: 4, expiresInDays: 0, days_left: 0, expiry_date: dateToIso(0), consumeByDate: dateToIso(0), storage: "Refrigerator", image: spinach, allergens: [], nutrition: n(23, 2.9, 3.6, 0.4, 2.2, ["Iron", "Vitamin K", "Folate"]), isVerifiedExpiry: false },
+  { id: "apples", name: "Shimla Apples", category: "Fruits", quantity: "4 pcs", freshness: 94, addedDaysAgo: 1, expiresInDays: 6, days_left: 6, expiry_date: dateToIso(6), consumeByDate: dateToIso(6), storage: "Refrigerator", image: apples, allergens: [], nutrition: n(52, 0.3, 14, 0.2, 2.4, ["Vitamin C", "Polyphenols"]), isVerifiedExpiry: false },
+  { id: "bananas", name: "Bananas", category: "Fruits", quantity: "5 pcs", freshness: 66, addedDaysAgo: 3, expiresInDays: 1, days_left: 1, expiry_date: dateToIso(1), consumeByDate: dateToIso(1), storage: "Counter", image: bananas, allergens: [], nutrition: n(89, 1.1, 23, 0.3, 2.6, ["Potassium", "Vitamin B6"]), isVerifiedExpiry: false },
+  { id: "rice", name: "Basmati Rice", category: "Grains", quantity: "500 g", freshness: 98, addedDaysAgo: 20, expiresInDays: 120, days_left: 120, expiry_date: dateToIso(120), consumeByDate: dateToIso(120), storage: "Pantry shelf", image: rice, allergens: [], nutrition: n(130, 2.7, 28, 0.3, 0.4, ["Manganese", "Selenium"]), lowStock: true, isVerifiedExpiry: true },
+  { id: "paneer", name: "Fresh Paneer", category: "Dairy", quantity: "200 g", freshness: 81, addedDaysAgo: 2, expiresInDays: 3, days_left: 3, expiry_date: dateToIso(3), consumeByDate: dateToIso(3), storage: "Refrigerator", image: paneer, allergens: ["Milk"], nutrition: n(290, 19, 3, 22, 0, ["Calcium", "Protein", "Phosphorus", "Vitamin B12"]), isVerifiedExpiry: true },
+  { id: "eggs", name: "Farm Eggs", category: "Other", quantity: "8 pcs", freshness: 88, addedDaysAgo: 5, expiresInDays: 9, days_left: 9, expiry_date: dateToIso(9), consumeByDate: dateToIso(9), storage: "Refrigerator", image: eggs, allergens: ["Eggs"], nutrition: n(155, 13, 1.1, 11, 0, ["Vitamin B12", "Choline"]), isVerifiedExpiry: true },
+  { id: "potatoes", name: "Potatoes", category: "Vegetables", quantity: "1 kg", freshness: 90, addedDaysAgo: 6, expiresInDays: 14, days_left: 14, expiry_date: dateToIso(14), consumeByDate: dateToIso(14), storage: "Pantry shelf", image: potatoes, allergens: [], nutrition: n(77, 2, 17, 0.1, 2.2, ["Vitamin C", "Potassium"]), isVerifiedExpiry: false },
+  { id: "bread", name: "Whole Wheat Bread", category: "Packaged Food", quantity: "½ loaf", freshness: 22, addedDaysAgo: 6, expiresInDays: -1, days_left: -1, expiry_date: dateToIso(-1), consumeByDate: dateToIso(-1), storage: "Counter", allergens: ["Gluten", "Soy"], nutrition: n(247, 13, 41, 3.4, 7, ["Fiber", "Iron"]), hasCriticalSpoilage: true, spoilageStatus: "SPOILED", isVerifiedExpiry: true },
+  { id: "curd", name: "Homemade Curd", category: "Dairy", quantity: "400 g", freshness: 70, addedDaysAgo: 2, expiresInDays: 4, days_left: 4, expiry_date: dateToIso(4), consumeByDate: dateToIso(4), storage: "Refrigerator", allergens: ["Milk"], nutrition: n(61, 3.5, 4.7, 3.3, 0, ["Probiotics", "Calcium"]), isVerifiedExpiry: false },
+  { id: "almonds", name: "Almonds", category: "Packaged Food", quantity: "250 g", freshness: 96, addedDaysAgo: 10, expiresInDays: 90, days_left: 90, expiry_date: dateToIso(90), consumeByDate: dateToIso(90), storage: "Pantry shelf", allergens: ["Nuts"], nutrition: n(579, 21, 22, 50, 12.5, ["Vitamin E", "Magnesium"]), isVerifiedExpiry: true },
 ];
 
 export interface Recipe {
@@ -118,7 +207,18 @@ export const seedShopping: ShopItem[] = [
 ];
 
 export type NotifCat = "Expiry" | "Freshness" | "Pantry" | "Recipes" | "Shopping" | "System";
-export interface Notif { id: string; cat: NotifCat; text: string; time: string; read: boolean }
+export interface Notif {
+  id: string;
+  cat: NotifCat;
+  text: string;
+  time: string;
+  read: boolean;
+  priority?: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+  foodId?: string;
+  actionUrl?: string;
+  dismissed?: boolean;
+}
+
 export const seedNotifs: Notif[] = [
   { id: "n1", cat: "Expiry", text: "Spinach should be consumed today.", time: "10 min ago", read: false },
   { id: "n2", cat: "Expiry", text: "Milk expires in 2 days.", time: "1 h ago", read: false },

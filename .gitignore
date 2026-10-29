@@ -33,3 +33,23 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Machine Learning Datasets & Models
+ml_data/
+*.onnx
+*.pt
+*.pth
+*.h5
+
+# Browser-deployed ONNX artifacts are intentionally versioned.
+!public/models/*.onnx
+!public/models/*.onnx.data
+
+
+ml_models/
+*.traineddata
+
+# Local SQLite databases
+data/*.db
+data/*.db-wal
+data/*.db-shm

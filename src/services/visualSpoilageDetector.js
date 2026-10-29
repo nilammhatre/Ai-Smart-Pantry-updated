@@ -3,6 +3,7 @@
 
 import { getFoodKnowledgeBase } from "./foodKnowledgeBase.js";
 import { classifyFoodFreshnessVisionModel } from "./freshnessClassifierModel.js";
+import { classifyFreshnessML } from "./mlModelInference.js";
 
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_AI_API_KEY || import.meta.env.GEMINI_AI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY || "";
 
@@ -18,6 +19,17 @@ export async function inspectVisualFreshnessAndSpoilage(imageBase64, itemDetails
   const kb = getFoodKnowledgeBase(foodName);
 
   console.log(`[VisualSpoilageDetector] 🔬 Executing AgriFreshNET & food-specific defect inspection for "${foodName}"...`);
+
+  // STEP 0: Try trained ML freshness model first (ONNX, fast, offline)
+  let mlFreshnessResult = null;
+  try {
+    mlFreshnessResult = await classifyFreshnessML(imageBase64);
+    if (mlFreshnessResult) {
+      console.log(`[VisualSpoilageDetector] ML Freshness: ${mlFreshnessResult.condition} (${(mlFreshnessResult.confidence * 100).toFixed(1)}%)`);
+    }
+  } catch (e) {
+    console.warn("[VisualSpoilageDetector] ML freshness model unavailable:", e.message);
+  }
 
   // STEP 1: Execute AgriFreshNET / VegQual Edge Vision Classifier Model
   const visionModelResult = await classifyFoodFreshnessVisionModel(imageBase64, foodName);
@@ -99,10 +111,11 @@ Respond ONLY in valid JSON format:
   "confidence": number
 }`;
 
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(10000),
         body: JSON.stringify({
           contents: [{
             parts: [
@@ -133,7 +146,17 @@ Respond ONLY in valid JSON format:
     }
   }
 
-  // STEP 3: APPLY DETERMINISTIC FOOD SAFETY OVERRIDE LAYER
+  // STEP 3: Merge ML freshness model results with vision flags
+  if (mlFreshnessResult && mlFreshnessResult.isSpoiled && mlFreshnessResult.confidence > 0.65) {
+    // ML model detected spoilage with high confidence - boost spoilage flags
+    if (!visionFlags.blackRotDetected && !visionFlags.fuzzyMoldDetected) {
+      visionFlags.severeDiscoloration = true;
+      visionFlags.observedDetails = (visionFlags.observedDetails || "") +
+        ` ML Model detected spoilage (${(mlFreshnessResult.confidence * 100).toFixed(0)}% confidence).`;
+    }
+  }
+
+  // STEP 4: APPLY DETERMINISTIC FOOD SAFETY OVERRIDE LAYER
   return applyHardFoodSafetyOverride(foodName, visionFlags, kb, visionModelResult);
 }
 

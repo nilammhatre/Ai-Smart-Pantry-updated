@@ -1,0 +1,28 @@
+{
+  "image_size": [
+    224,
+    224
+  ],
+  "mean": [
+    0.485,
+    0.456,
+    0.406
+  ],
+  "std": [
+    0.229,
+    0.224,
+    0.225
+  ],
+  "models": {
+    "identity": {
+      "path": "/models/identity_model.onnx",
+      "class_mapping": "/models/identity_model_class_mapping.json",
+      "confidence_threshold": 0.45
+    },
+    "freshness": {
+      "path": "/models/freshness_model.onnx",
+      "class_mapping": "/models/freshness_model_class_mapping.json",
+      "confidence_threshold": 0.5
+    }
+  }
+}

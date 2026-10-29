@@ -164,7 +164,7 @@ export function normalizeOpenFoodFactsProduct(product, barcode) {
   const brand = product.brands ? product.brands.split(",")[0].trim() : "";
   const categoriesList = product.categories ? product.categories.split(",").map(c => c.trim()) : [];
   
-  let category = "Packaged Foods";
+  let category = "";
   const catLower = categoriesList.join(" ").toLowerCase();
   if (catLower.includes("dairy") || catLower.includes("milk") || catLower.includes("cheese") || catLower.includes("yogurt")) {
     category = "Dairy";
@@ -183,7 +183,7 @@ export function normalizeOpenFoodFactsProduct(product, barcode) {
   }
 
   const imageUrl = product.image_front_url || product.image_url || product.image_small_url || "";
-  const quantity = product.quantity || product.net_weight_value ? `${product.net_weight_value} ${product.net_weight_unit || 'g'}` : "1 pack";
+  const quantity = product.quantity || (product.net_weight_value ? `${product.net_weight_value} ${product.net_weight_unit || "g"}` : "1 pack");
   
   let allergens = [];
   if (Array.isArray(product.allergens_tags) && product.allergens_tags.length > 0) {
@@ -215,15 +215,15 @@ export function normalizeOpenFoodFactsProduct(product, barcode) {
     category,
     quantity,
     imageUrl,
-    ingredients: product.ingredients_text_en || product.ingredients_text || "Standard ingredient list",
+    ingredients: product.ingredients_text_en || product.ingredients_text || "",
     allergens: Array.from(new Set(allergens)),
     nutrition: {
-      calories,
-      protein,
-      carbs,
-      fat,
-      fiber,
-      sodium,
+      calories: Number.isFinite(calories) && calories > 0 ? calories : null,
+      protein: Number.isFinite(protein) && protein > 0 ? protein : null,
+      carbs: Number.isFinite(carbs) && carbs > 0 ? carbs : null,
+      fat: Number.isFinite(fat) && fat > 0 ? fat : null,
+      fiber: Number.isFinite(fiber) && fiber > 0 ? fiber : null,
+      sodium: Number.isFinite(sodium) && sodium > 0 ? sodium : null,
       nutrients: nutrientsList
     },
     confidence: 0.95,
@@ -238,14 +238,14 @@ export function normalizeOpenFoodFactsProduct(product, barcode) {
  * @returns {Promise<object>} Normalized product info
  */
 export async function lookupBarcodeOpenFoodFacts(barcode) {
-  const cleanBarcode = String(barcode).trim().replace(/[^\d]/g, "");
-  if (!cleanBarcode) {
+  const cleanBarcode = String(barcode || "").trim();
+  if (!/^\d{8,14}$/.test(cleanBarcode)) {
     return { found: false, error: "Invalid barcode provided", confidence: 0 };
   }
 
-  // 1. Check curated offline dataset registry
+  // 1. Check curated offline dataset registry for instant & reliable matches
   if (OFFLINE_BARCODE_DATASET_REGISTRY[cleanBarcode]) {
-    console.log(`[OpenFoodFacts] ⚡ Instant match for barcode ${cleanBarcode} from dataset registry.`);
+    console.log(`[OpenFoodFacts] ⚡ Serving barcode ${cleanBarcode} from offline dataset registry.`);
     return OFFLINE_BARCODE_DATASET_REGISTRY[cleanBarcode];
   }
 
@@ -279,11 +279,14 @@ export async function lookupBarcodeOpenFoodFacts(barcode) {
     const url = `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(cleanBarcode)}.json`;
     
     const response = await fetch(url, {
-      headers: {
-        "User-Agent": "AISmartPantry - Web - Version 1.0"
-      }
+      headers: { Accept: "application/json" },
+      signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined
     });
 
+    if (response.status === 404) {
+      console.warn(`[OpenFoodFacts] Barcode ${cleanBarcode} is not present in Open Food Facts.`);
+      return { found: false, barcode: cleanBarcode, status: "unknown", confidence: 0 };
+    }
     if (!response.ok) {
       throw new Error(`Open Food Facts API HTTP ${response.status}`);
     }
@@ -304,10 +307,69 @@ export async function lookupBarcodeOpenFoodFacts(barcode) {
       return normalized;
     } else {
       console.warn(`[OpenFoodFacts] ⚠️ Barcode ${cleanBarcode} not found in Open Food Facts database.`);
-      return { found: false, barcode: cleanBarcode, confidence: 0 };
+      return { found: false, barcode: cleanBarcode, status: "unknown", confidence: 0 };
     }
   } catch (error) {
     console.error(`[OpenFoodFacts] Network or API error for barcode ${cleanBarcode}:`, error);
-    return { found: false, barcode: cleanBarcode, error: error.message, confidence: 0 };
+    return { found: false, barcode: cleanBarcode, status: "network_error", error: error.message, confidence: 0 };
+  }
+}
+
+/**
+ * Uses the package frame as a second-source enrichment for regional products
+ * missing from Open Food Facts. Results are deliberately provisional: the
+ * model must report null when the package does not show the value, and callers
+ * must keep the item requiring confirmation.
+ */
+export async function lookupBarcodeWithGemini(barcode, imageBase64) {
+  const apiKey = typeof localStorage !== "undefined"
+    ? localStorage.getItem("smart_pantry_gemini_api_key")
+    : (import.meta.env?.VITE_GEMINI_AI_API_KEY || import.meta.env?.VITE_GEMINI_API_KEY || "");
+  if (!apiKey || !imageBase64 || !/^\d{8,14}$/.test(String(barcode || ""))) return null;
+
+  try {
+    const base64Data = String(imageBase64).replace(/^data:image\/\w+;base64,/, "");
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey.trim())}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(12000) : undefined,
+      body: JSON.stringify({
+        contents: [{ parts: [
+          { text: `Identify the packaged product shown in this image. The decoded barcode is ${barcode}. Use the barcode and visible package text together; do not infer a product from the barcode alone. Return null for every field not clearly supported by the package. Nutrition is per 100g/100ml only when printed on the package. Also inspect the printed expiry date or best before date if visible (in YYYY-MM-DD or DD/MM/YYYY format), and assess packaging condition (INTACT, DAMAGED, BLOATED, LEAKING, TORN). Return JSON only: {"product_name":string|null,"brand":string|null,"category":string|null,"quantity":string|null,"ingredients":string|null,"allergens":string[],"expiry_date":string|null,"packaging_condition":string|null,"packaging_notes":string|null,"nutrition":{"calories":number|null,"protein":number|null,"carbs":number|null,"fat":number|null,"fiber":number|null,"calcium":number|null}|null,"confidence":number}` },
+          { inline_data: { mime_type: "image/jpeg", data: base64Data } }
+        ] }],
+        generationConfig: { response_mime_type: "application/json" }
+      })
+    });
+    if (!response.ok) return null;
+    const text = (await response.json()).candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) return null;
+    const parsed = JSON.parse(text);
+    const confidence = Math.max(0, Math.min(1, Number(parsed.confidence) || 0));
+    if (!parsed.product_name || confidence < 0.7) return null;
+    const nutrition = parsed.nutrition && typeof parsed.nutrition === "object" ? Object.fromEntries(
+      ["calories", "protein", "carbs", "fat", "fiber", "calcium"].map((key) => [key, Number.isFinite(Number(parsed.nutrition[key])) ? Number(parsed.nutrition[key]) : null])
+    ) : null;
+    return {
+      found: true,
+      barcode: String(barcode),
+      name: String(parsed.product_name),
+      productNameOnly: String(parsed.product_name),
+      brand: parsed.brand ? String(parsed.brand) : "",
+      category: parsed.category ? String(parsed.category) : "",
+      quantity: parsed.quantity ? String(parsed.quantity) : "",
+      ingredients: parsed.ingredients ? String(parsed.ingredients) : "",
+      allergens: Array.isArray(parsed.allergens) ? parsed.allergens.filter(Boolean).map(String) : [],
+      nutrition,
+      expiryDate: parsed.expiry_date ? String(parsed.expiry_date).trim() : null,
+      packagingCondition: parsed.packaging_condition ? String(parsed.packaging_condition).trim() : "INTACT",
+      packagingNotes: parsed.packaging_notes ? String(parsed.packaging_notes).trim() : null,
+      confidence,
+      requiresUserConfirmation: true,
+      identificationMethod: "Gemini package-frame enrichment (provisional)"
+    };
+  } catch (error) {
+    console.warn("[OpenFoodFacts] Gemini barcode enrichment unavailable:", error?.message || error);
+    return null;
   }
 }

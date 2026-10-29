@@ -1,0 +1,10 @@
+{
+  "class_to_idx": {
+    "fresh": 0,
+    "spoiled": 1
+  },
+  "idx_to_class": {
+    "0": "fresh",
+    "1": "spoiled"
+  }
+}

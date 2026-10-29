@@ -291,7 +291,22 @@ export const pantryDb = {
     const items = this.getItems();
     const nowIso = new Date().toISOString();
 
-    const formattedItems = newItems.map(item => {
+    // Deduplicate against existing items with matching orderId and name
+    const nonDuplicates = (newItems || []).filter(newItem => {
+      if (!newItem.orderId) return true;
+      const exists = items.some(existing => 
+        existing.orderId === newItem.orderId && 
+        existing.name.toLowerCase().trim() === newItem.name.toLowerCase().trim()
+      );
+      return !exists;
+    });
+
+    if (nonDuplicates.length === 0) {
+      console.log("[PantryDb] All items in batch already exist in pantry; duplicate import prevented.");
+      return [];
+    }
+
+    const formattedItems = nonDuplicates.map(item => {
       const itemRaw = {
         ...item,
         id: item.id || "pantry_" + Date.now().toString(36) + Math.random().toString(36).substring(2, 7),
