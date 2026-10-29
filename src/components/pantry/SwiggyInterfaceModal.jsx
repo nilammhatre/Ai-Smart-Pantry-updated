@@ -53,7 +53,7 @@ export default function SwiggyInterfaceModal({
   const [isConnected, setIsConnected] = useState(() => swiggyService.isConnected());
 
   // Phone / OTP login simulation
-  const [phone, setPhone] = useState("9322348511");
+  const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [otpSent, setOtpSent] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -1094,6 +1094,11 @@ export default function SwiggyInterfaceModal({
                                 <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 uppercase">
                                   {ord.status || "Delivered"}
                                 </span>
+                                {swiggyMode === "mock" && (
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                                    🧪 Sample Demo
+                                  </span>
+                                )}
                               </div>
                               <p className="text-[11px] text-muted-foreground mt-0.5">
                                 {new Date(ord.createdAt || Date.now()).toLocaleDateString()} · {ord.itemCount || (ord.items || []).length || 1} items · ₹{ord.totalAmount}
@@ -1221,19 +1226,24 @@ export default function SwiggyInterfaceModal({
                   {/* Phone + OTP Login Box */}
                   <div className="rounded-2xl border border-border bg-card p-5 space-y-4 shadow-sm">
                     <div className="space-y-1">
-                      <h4 className="font-bold text-base text-foreground flex items-center gap-2">
-                        <Smartphone className="h-4 w-4 text-orange-500" />
-                        Quick Phone Login
-                      </h4>
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-bold text-base text-foreground flex items-center gap-2">
+                          <Smartphone className="h-4 w-4 text-orange-500" />
+                          Simulation Phone Login
+                        </h4>
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                          🧪 Demo Data Only
+                        </span>
+                      </div>
                       <p className="text-xs text-muted-foreground">
-                        Enter phone number to receive instant verification code
+                        Simulates an OTP verification flow using sample orders. Does not connect to real Swiggy servers.
                       </p>
                     </div>
 
                     <div className="space-y-3">
                       <div>
                         <label className="text-xs font-semibold text-muted-foreground block mb-1">
-                          Indian Mobile Number
+                          Test Mobile Number
                         </label>
                         <div className="flex rounded-xl border border-border overflow-hidden bg-surface">
                           <span className="px-3 py-2 text-xs font-bold text-muted-foreground bg-secondary/80 border-r border-border flex items-center">
@@ -1244,7 +1254,7 @@ export default function SwiggyInterfaceModal({
                             maxLength={10}
                             value={phone}
                             onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}
-                            placeholder="9322348511"
+                            placeholder="Enter 10-digit number"
                             className="flex-1 px-3 py-2 text-sm bg-transparent text-foreground outline-none font-medium"
                           />
                         </div>
@@ -1543,6 +1553,11 @@ export default function SwiggyInterfaceModal({
                           <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 uppercase">
                             {ord.status || "Delivered"}
                           </span>
+                          {swiggyMode === "mock" && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                              🧪 Sample Demo
+                            </span>
+                          )}
                         </div>
                         <p className="text-xs text-muted-foreground mt-0.5">
                           {new Date(ord.createdAt || Date.now()).toLocaleString()} · {ord.itemCount || (ord.items || []).length || 0} items
@@ -1603,7 +1618,11 @@ export default function SwiggyInterfaceModal({
               onClick={() => setActiveTab("login")}
               className="text-xs text-orange-600 dark:text-orange-400 font-semibold hover:underline"
             >
-              {isConnected ? "Connected: Nilam Mhatre" : "Switch / Connect Account"}
+              {isConnected
+                ? swiggyMode === "real"
+                  ? (userInfo?.verifiedName ? `Connected: ${userInfo.verifiedName}` : "Connected: Swiggy OAuth")
+                  : "Mode: Simulation Demo"
+                : "Switch / Connect Account"}
             </button>
           </div>
         </div>
