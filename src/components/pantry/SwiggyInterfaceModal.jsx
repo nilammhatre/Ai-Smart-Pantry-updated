@@ -82,6 +82,8 @@ export default function SwiggyInterfaceModal({
   const [orderEta, setOrderEta] = useState(14);
   const [pastOrders, setPastOrders] = useState([]);
   const [loadingOrders, setLoadingOrders] = useState(false);
+  const [userInfo, setUserInfo] = useState(null);
+  const [orderFetchError, setOrderFetchError] = useState(null);
 
   // Live Swiggy Instamart Product Search
   const [searchQuery, setSearchQuery] = useState("");
@@ -141,6 +143,17 @@ export default function SwiggyInterfaceModal({
     };
   }, []);
 
+  // Fetch user info when connected
+  useEffect(() => {
+    if (isConnected) {
+      swiggyService.getUserInfo().then((info) => {
+        if (info) setUserInfo(info);
+      }).catch(() => {});
+    } else {
+      setUserInfo(null);
+    }
+  }, [isConnected, swiggyMode]);
+
   // Fetch past orders whenever modal opens or connection is active
   useEffect(() => {
     if (isConnected && isOpen) {
@@ -150,16 +163,29 @@ export default function SwiggyInterfaceModal({
 
   const loadPastOrders = async () => {
     setLoadingOrders(true);
+    setOrderFetchError(null);
     try {
-      const orders = await swiggyService.getOrders();
-      if (orders && orders.length > 0) {
-        setPastOrders(orders);
+      const [ordersResult, userResult] = await Promise.allSettled([
+        swiggyService.getOrders(),
+        swiggyService.getUserInfo()
+      ]);
+
+      if (userResult.status === "fulfilled" && userResult.value) {
+        setUserInfo(userResult.value);
+      }
+
+      if (ordersResult.status === "fulfilled") {
+        setPastOrders(ordersResult.value || []);
       } else {
+        const errorMsg = ordersResult.reason?.message || "Failed to load orders from Swiggy Instamart.";
+        setOrderFetchError(errorMsg);
+        console.warn("Swiggy orders fetch error:", ordersResult.reason);
         const active = swiggyService.getActiveOrders();
         setPastOrders(active || []);
       }
     } catch (err) {
       console.warn("Could not load past Swiggy orders:", err);
+      setOrderFetchError(err.message || "Failed to load orders from Swiggy Instamart.");
       const active = swiggyService.getActiveOrders();
       setPastOrders(active || []);
     } finally {
@@ -939,21 +965,25 @@ export default function SwiggyInterfaceModal({
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className="h-12 w-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center font-bold text-lg shadow-md">
-                        {swiggyMode === "real" ? "IM" : "NM"}
+                        {swiggyMode === "real"
+                          ? (userInfo?.verifiedName ? userInfo.verifiedName.charAt(0).toUpperCase() : "IM")
+                          : "IM"}
                       </div>
                       <div>
                         <div className="flex items-center gap-2">
                           <h4 className="font-bold text-base text-foreground">
-                            {swiggyMode === "real" ? "Genuine Swiggy MCP User" : "Nilam Mhatre"}
+                            {swiggyMode === "real"
+                              ? (userInfo?.verifiedName || (userInfo?.userId ? `Swiggy User #${String(userInfo.userId).slice(-6)}` : "Authenticated Swiggy Session"))
+                              : "Simulation Test Session"}
                           </h4>
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500 text-black uppercase">
-                            {swiggyMode === "real" ? "Official MCP Connected" : "⭐ Swiggy One Member"}
+                            {swiggyMode === "real" ? "Verified OAuth Session" : "🧪 Demo Mode"}
                           </span>
                         </div>
                         <p className="text-xs text-muted-foreground">
                           {swiggyMode === "real"
-                            ? "Connected via Swiggy Builders Club OAuth 2.1 PKCE"
-                            : "+91 9322348511 · Active Indian Account"}
+                            ? (userInfo?.verifiedEmail || (userInfo?.userId ? `Swiggy User ID: ${userInfo.userId}` : "Connected via Swiggy Builders Club OAuth 2.1"))
+                            : "Instamart Local Simulation Active"}
                         </p>
                       </div>
                     </div>
@@ -1013,14 +1043,43 @@ export default function SwiggyInterfaceModal({
                     {loadingOrders ? (
                       <div className="p-4 rounded-xl border border-border bg-card text-center space-y-2">
                         <span className="h-4 w-4 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin inline-block" />
-                        <p className="text-xs text-muted-foreground">Fetching your Swiggy orders via MCP...</p>
+                        <p className="text-xs text-muted-foreground">Fetching your Swiggy orders via MCP (https://mcp.swiggy.com/im)...</p>
+                      </div>
+                    ) : orderFetchError ? (
+                      <div className="p-4 rounded-xl border border-red-500/30 bg-red-500/10 text-xs space-y-2">
+                        <div className="flex items-center gap-2 font-bold text-red-600 dark:text-red-400">
+                          <AlertTriangle className="h-4 w-4 shrink-0" />
+                          <span>Swiggy MCP Order Sync Error</span>
+                        </div>
+                        <p className="text-muted-foreground font-mono text-[11px] break-all">
+                          {orderFetchError}
+                        </p>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={loadPastOrders}
+                          className="h-7 text-xs border-red-500/40 text-red-600 hover:bg-red-500/15"
+                        >
+                          <RefreshCw className="h-3 w-3 mr-1" /> Retry Order Sync
+                        </Button>
                       </div>
                     ) : pastOrders.length === 0 ? (
-                      <div className="p-4 rounded-xl border border-dashed border-border bg-card text-center space-y-1">
-                        <p className="text-xs font-semibold text-foreground">No recent Swiggy orders found.</p>
-                        <p className="text-[11px] text-muted-foreground">
-                          Orders placed with this account will automatically sync here.
+                      <div className="p-4 rounded-xl border border-dashed border-border bg-card text-center space-y-1.5">
+                        <p className="text-xs font-semibold text-foreground">0 Swiggy Instamart orders returned for this account.</p>
+                        <p className="text-[11px] text-muted-foreground max-w-sm mx-auto">
+                          Authenticated session active. Swiggy MCP returned 0 past orders for this client.
                         </p>
+                        <div className="flex justify-center gap-2 pt-1">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={loadPastOrders}
+                            disabled={loadingOrders}
+                            className="text-xs h-7 border-emerald-500/40 text-emerald-600 hover:bg-emerald-500/10"
+                          >
+                            <RefreshCw className={`h-3 w-3 mr-1 ${loadingOrders ? "animate-spin" : ""}`} /> Refresh
+                          </Button>
+                        </div>
                       </div>
                     ) : (
                       <div className="space-y-2 max-h-60 overflow-y-auto">
@@ -1412,32 +1471,62 @@ export default function SwiggyInterfaceModal({
                     Login to Swiggy
                   </Button>
                 </div>
+              ) : loadingOrders ? (
+                <div className="rounded-2xl border border-border bg-card p-8 text-center space-y-3">
+                  <span className="h-6 w-6 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin inline-block" />
+                  <p className="text-sm font-semibold text-foreground">Fetching orders from Swiggy Instamart MCP...</p>
+                  <p className="text-xs text-muted-foreground">Querying https://mcp.swiggy.com/im using authenticated session.</p>
+                </div>
+              ) : orderFetchError ? (
+                <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-6 space-y-3">
+                  <div className="flex items-center gap-2 font-bold text-red-600 dark:text-red-400">
+                    <AlertTriangle className="h-5 w-5 shrink-0" />
+                    <span className="text-sm font-semibold">Swiggy MCP Order Request Failed</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground font-mono bg-background/50 p-3 rounded-xl border border-red-500/20 break-all">
+                    {orderFetchError}
+                  </p>
+                  <div className="flex items-center gap-2 pt-1">
+                    <Button
+                      size="sm"
+                      onClick={loadPastOrders}
+                      className="bg-red-600 hover:bg-red-500 text-white text-xs font-bold"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Retry Sync
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setActiveTab("login")}
+                      className="text-xs"
+                    >
+                      Check Account Status
+                    </Button>
+                  </div>
+                </div>
               ) : pastOrders.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-border p-8 text-center space-y-3">
                   <PackageCheck className="h-8 w-8 mx-auto text-muted-foreground/60" />
-                  <p className="text-sm font-semibold">No recent Swiggy orders found.</p>
+                  <p className="text-sm font-semibold">0 Swiggy Instamart orders returned.</p>
                   <p className="text-xs text-muted-foreground max-w-md mx-auto">
-                    Your Swiggy account is connected, but no past orders were returned by Swiggy Instamart for this session. You can place an order from your shopping list or view demo order activity.
+                    Your account is authenticated via Swiggy Builders Club OAuth 2.1, but Swiggy MCP returned 0 past orders for this client.
                   </p>
                   <div className="flex flex-wrap justify-center gap-2 pt-1">
+                    <Button
+                      size="sm"
+                      onClick={loadPastOrders}
+                      variant="outline"
+                      disabled={loadingOrders}
+                      className="text-xs"
+                    >
+                      <RefreshCw className={`h-3 w-3 mr-1 ${loadingOrders ? "animate-spin" : ""}`} /> Refresh
+                    </Button>
                     <Button
                       size="sm"
                       onClick={() => setActiveTab("cart")}
                       className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs"
                     >
                       🛒 Go to Cart ({cart.length})
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={async () => {
-                        const mockOrders = await mockSwiggyProvider.getOrders();
-                        setPastOrders(mockOrders);
-                        toast.success("Loaded demonstration past orders for pantry testing.");
-                      }}
-                      className="text-xs"
-                    >
-                      📦 View Sample Orders
                     </Button>
                   </div>
                 </div>

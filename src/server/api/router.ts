@@ -20,7 +20,8 @@ import {
   getSwiggyConfig,
   registerDynamicClient,
   exchangeSwiggyToken,
-  invokeSwiggyMcpTool
+  invokeSwiggyMcpTool,
+  getSwiggyUserInfo
 } from "../services/swiggyBackend";
 
 const repo = new PantryRepository();
@@ -750,6 +751,34 @@ function enrichNutritionMacros(foodName: string, category?: string, currentNutri
       }
       try {
         const result = await invokeSwiggyMcpTool(tool, args || {}, token);
+        return jsonResponse({ success: true, result });
+      } catch (err: any) {
+        return errorResponse(err.message, 500);
+      }
+    }
+
+    if (path === "/api/swiggy/user" && method === "GET") {
+      const authHeader = request.headers.get("Authorization") || "";
+      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+      if (!token) {
+        return errorResponse("Unauthorized: Missing Authorization Bearer token", 401);
+      }
+      try {
+        const userInfo = await getSwiggyUserInfo(token);
+        return jsonResponse({ success: true, ...userInfo });
+      } catch (err: any) {
+        return errorResponse(err.message, 500);
+      }
+    }
+
+    if (path === "/api/swiggy/tools" && method === "GET") {
+      const authHeader = request.headers.get("Authorization") || "";
+      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+      if (!token) {
+        return errorResponse("Unauthorized: Missing Authorization Bearer token", 401);
+      }
+      try {
+        const result = await invokeSwiggyMcpTool("tools/list", {}, token);
         return jsonResponse({ success: true, result });
       } catch (err: any) {
         return errorResponse(err.message, 500);

@@ -185,6 +185,60 @@ export async function exchangeSwiggyToken(code: string, codeVerifier: string, cu
   };
 }
 
+export function parseJwtClaims(jwtToken?: string | null): Record<string, any> | null {
+  if (!jwtToken || typeof jwtToken !== "string") return null;
+  try {
+    const parts = jwtToken.split(".");
+    if (parts.length >= 2) {
+      const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+      const jsonStr = Buffer.from(base64, "base64").toString("utf-8");
+      return JSON.parse(jsonStr);
+    }
+  } catch {
+    // not a valid JWT
+  }
+  return null;
+}
+
+export async function getSwiggyUserInfo(accessToken: string): Promise<Record<string, any>> {
+  if (!accessToken) {
+    throw new Error("Missing access token for Swiggy userinfo.");
+  }
+
+  const claims = parseJwtClaims(accessToken);
+  let userinfoData: any = {};
+
+  try {
+    const userinfoRes = await fetch("https://mcp.swiggy.com/auth/userinfo", {
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Accept": "application/json"
+      }
+    });
+    if (userinfoRes.ok) {
+      userinfoData = await userinfoRes.json().catch(() => ({}));
+    }
+  } catch {
+    // optional endpoint
+  }
+
+  const name = userinfoData.name || claims?.name || (claims?.given_name ? `${claims.given_name} ${claims.family_name || ""}`.trim() : null);
+  const email = userinfoData.email || claims?.email || null;
+  const phone = userinfoData.phone_number || userinfoData.phone || claims?.phone_number || claims?.phone || null;
+  const userId = userinfoData.sub || claims?.sub || userinfoData.id || claims?.user_id || null;
+  const accountId = claims?.account_id || userId;
+
+  return {
+    authenticated: true,
+    verifiedName: name || null,
+    verifiedEmail: email || null,
+    verifiedPhone: phone || null,
+    userId: userId || null,
+    accountId: accountId || null,
+    source: userinfoData.name ? "swiggy_userinfo" : (claims ? "oauth_jwt" : "token_session")
+  };
+}
+
 /**
  * Calls an official MCP Tool on https://mcp.swiggy.com/im via streamable JSON-RPC.
  */
@@ -195,21 +249,29 @@ export async function invokeSwiggyMcpTool(toolName: string, toolArguments: Recor
 
   console.log(`[SwiggyBackend] Invoking MCP tool "${toolName}" on ${IM_MCP_ENDPOINT}...`, toolArguments);
 
-  const payload = {
-    jsonrpc: "2.0",
-    id: Date.now(),
-    method: "tools/call",
-    params: {
-      name: toolName,
-      arguments: toolArguments
-    }
-  };
+  const isToolsList = toolName === "tools/list" || toolName === "tools_list";
+  const payload = isToolsList
+    ? {
+        jsonrpc: "2.0",
+        id: Date.now(),
+        method: "tools/list",
+        params: {}
+      }
+    : {
+        jsonrpc: "2.0",
+        id: Date.now(),
+        method: "tools/call",
+        params: {
+          name: toolName,
+          arguments: toolArguments
+        }
+      };
 
   const res = await fetch(IM_MCP_ENDPOINT, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Accept": "application/json",
+      "Accept": "application/json, text/event-stream",
       "Authorization": `Bearer ${accessToken}`
     },
     body: JSON.stringify(payload)
@@ -217,15 +279,40 @@ export async function invokeSwiggyMcpTool(toolName: string, toolArguments: Recor
 
   const bodyText = await res.text();
   let data: any = {};
-  try {
-    data = JSON.parse(bodyText);
-  } catch {
-    data = { raw: bodyText };
+
+  // Check if response is SSE event stream or contains SSE data lines
+  const contentType = (res.headers && typeof res.headers.get === "function" ? res.headers.get("content-type") : "") || "";
+  if (contentType.includes("text/event-stream") || bodyText.startsWith("data:") || bodyText.includes("\ndata:")) {
+    const lines = bodyText.split("\n");
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("data:")) {
+        const jsonStr = trimmed.slice(5).trim();
+        try {
+          const parsed = JSON.parse(jsonStr);
+          if (parsed && (parsed.result !== undefined || parsed.error !== undefined || parsed.jsonrpc)) {
+            data = parsed;
+          }
+        } catch {
+          // ignore non-json SSE lines
+        }
+      }
+    }
+  }
+
+  // Fallback to plain JSON parse if data wasn't extracted from SSE
+  if (!data || Object.keys(data).length === 0) {
+    try {
+      data = JSON.parse(bodyText);
+    } catch {
+      data = { raw: bodyText };
+    }
   }
 
   if (!res.ok) {
     console.error(`[SwiggyBackend] MCP tool "${toolName}" invocation failed (HTTP ${res.status}):`, bodyText);
-    throw new Error(data.error?.message || data.message || `Swiggy MCP Tool Call Failed (HTTP ${res.status})`);
+    const errMsg = data.error?.message || data.message || `Swiggy MCP Tool Call Failed (HTTP ${res.status})`;
+    throw new Error(errMsg);
   }
 
   if (data.error) {
@@ -233,5 +320,6 @@ export async function invokeSwiggyMcpTool(toolName: string, toolArguments: Recor
     throw new Error(data.error.message || "MCP Tool invocation returned an error.");
   }
 
+  console.log(`[SwiggyBackend] MCP tool "${toolName}" responded successfully. Keys:`, Object.keys(data.result || {}));
   return data.result;
 }

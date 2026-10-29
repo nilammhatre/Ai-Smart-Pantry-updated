@@ -350,6 +350,34 @@ export const realSwiggyProvider = {
     return await callMcpTool("checkout", checkoutArgs);
   },
 
+  // Get verified user profile/identity from Swiggy
+  async getUserInfo() {
+    if (!this.isConnected()) return null;
+    try {
+      const token = typeof localStorage !== "undefined" ? localStorage.getItem(TOKEN_KEY) : null;
+      if (!token) return null;
+      const res = await fetch(getApiUrl("/api/swiggy/user"), {
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (err) {
+      console.warn("[Real Swiggy] Error fetching verified user info:", err);
+    }
+    return null;
+  },
+
+  // Discover documented MCP tools on https://mcp.swiggy.com/im
+  async listMcpTools() {
+    if (!this.isConnected()) {
+      throw new Error("Unauthorized: Swiggy connection required to list MCP tools.");
+    }
+    return await callMcpTool("tools/list", {});
+  },
+
   // Get past orders from genuine Swiggy MCP
   async getOrders(limit = 10) {
     if (!this.isConnected()) {
@@ -357,41 +385,51 @@ export const realSwiggyProvider = {
     }
 
     let ordersList = [];
+    let rawResult = null;
     try {
-      const result = await callMcpTool("get_orders", { limit });
-
-      if (result && result.content && result.content[0] && result.content[0].text) {
-        try {
-          const parsed = JSON.parse(result.content[0].text);
-          ordersList = parsed.orders || parsed.data || parsed.past_orders || parsed.recent_orders || (Array.isArray(parsed) ? parsed : []);
-        } catch {
-          ordersList = [];
-        }
-      } else if (Array.isArray(result)) {
-        ordersList = result;
-      } else if (result && result.orders) {
-        ordersList = result.orders;
-      } else if (result && result.data) {
-        ordersList = result.data;
-      }
+      rawResult = await callMcpTool("get_orders", { limit });
     } catch (err) {
-      console.warn("[Real Swiggy] get_orders MCP call warning:", err);
+      console.error("[Real Swiggy] get_orders MCP call error:", err);
+      throw err;
     }
 
+    if (rawResult && rawResult.content && Array.isArray(rawResult.content)) {
+      for (const part of rawResult.content) {
+        if (part.type === "text" && part.text) {
+          try {
+            const parsed = JSON.parse(part.text);
+            if (Array.isArray(parsed)) {
+              ordersList = parsed;
+            } else if (parsed && typeof parsed === "object") {
+              ordersList = parsed.orders || parsed.data || parsed.past_orders || parsed.recent_orders || parsed.items || [];
+            }
+          } catch {
+            // text was not json string
+          }
+        }
+      }
+    } else if (Array.isArray(rawResult)) {
+      ordersList = rawResult;
+    } else if (rawResult && typeof rawResult === "object") {
+      ordersList = rawResult.orders || rawResult.data || rawResult.past_orders || rawResult.recent_orders || [];
+    }
+
+    console.log(`[Real Swiggy] Successfully parsed ${ordersList.length} orders from get_orders MCP response.`);
+
     return (ordersList || []).map((order) => {
-      const rawItems = order.items || order.order_items || order.products || order.item_details || [];
+      const rawItems = order.items || order.order_items || order.products || order.item_details || order.cart_items || [];
       return {
-        orderId: order.orderId || order.order_id || order.id || `swiggy_${Date.now()}`,
+        orderId: String(order.orderId || order.order_id || order.id || order.orderID || `swiggy_${Date.now()}`),
         createdAt: order.createdAt || order.created_at || order.order_time || order.ordered_at || new Date().toISOString(),
         deliveredAt: order.deliveredAt || order.delivered_at || order.delivery_time || null,
-        status: order.status || order.order_status || order.delivery_status || "delivered",
-        totalAmount: order.totalAmount || order.total_amount || order.order_total || order.net_amount || order.amount || 0,
+        status: (order.status || order.order_status || order.delivery_status || "delivered").toLowerCase(),
+        totalAmount: Number(order.totalAmount || order.total_amount || order.order_total || order.net_amount || order.amount || 0),
         itemCount: rawItems.length || order.itemCount || order.item_count || 0,
         items: rawItems.map((i) => ({
-          name: i.name || i.item_name || i.title || i.product_name || "Grocery Item",
+          name: i.name || i.item_name || i.title || i.product_name || i.productTitle || "Grocery Item",
           quantity: Number(i.quantity || i.qty || i.count || 1),
           price: Number(i.price || i.final_price || i.item_price || i.unit_price || 0),
-          category: i.category || i.category_name || "Grocery",
+          category: i.category || i.category_name || i.super_category || "Grocery",
           unit: i.unit || i.quantity_unit || "pcs"
         }))
       };

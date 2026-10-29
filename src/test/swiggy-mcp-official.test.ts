@@ -10,6 +10,8 @@ import {
   registerDynamicClient,
   exchangeSwiggyToken,
   invokeSwiggyMcpTool,
+  getSwiggyUserInfo,
+  parseJwtClaims,
   resetCachedDynamicClient
 } from "../server/services/swiggyBackend.js";
 
@@ -245,6 +247,86 @@ describe("Official Swiggy Builders Club MCP & OAuth 2.1 Implementation", () => {
       expect(items[0].name).toContain("Whole Wheat Bread");
       expect(items[0].price).toBe(48);
       expect(items[0].category).toBe("Bakery");
+    });
+
+    it("parses genuine get_orders MCP response with items and categories", async () => {
+      localStorage.setItem(TOKEN_KEY, "test_authorized_token");
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          success: true,
+          result: {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  orders: [
+                    {
+                      order_id: "swiggy_real_99812",
+                      order_time: "2026-10-29T18:30:00Z",
+                      order_status: "delivered",
+                      total_amount: 142.50,
+                      items: [
+                        { name: "Amul Taaza Milk 500ml", quantity: 2, price: 28, category: "Dairy" },
+                        { name: "Whole Wheat Bread 400g", quantity: 1, price: 45, category: "Bakery" }
+                      ]
+                    }
+                  ]
+                })
+              }
+            ]
+          }
+        })
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const orders = await realSwiggyProvider.getOrders();
+      expect(orders.length).toBe(1);
+      expect(orders[0].orderId).toBe("swiggy_real_99812");
+      expect(orders[0].items.length).toBe(2);
+      expect(orders[0].items[0].name).toBe("Amul Taaza Milk 500ml");
+      expect(orders[0].totalAmount).toBe(142.50);
+    });
+
+    it("extracts verified user identity from JWT claims without falling back to profile", async () => {
+      // Craft a standard base64url JWT payload
+      const payload = {
+        sub: "swiggy_user_987654321",
+        name: "Rahul Sharma",
+        email: "rahul.sharma@example.com",
+        phone_number: "+919876543210"
+      };
+      const b64 = Buffer.from(JSON.stringify(payload)).toString("base64url");
+      const fakeJwt = `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.${b64}.fakeSignature`;
+
+      const claims = parseJwtClaims(fakeJwt);
+      expect(claims).toBeDefined();
+      expect(claims?.name).toBe("Rahul Sharma");
+      expect(claims?.sub).toBe("swiggy_user_987654321");
+
+      const userInfo = await getSwiggyUserInfo(fakeJwt);
+      expect(userInfo.authenticated).toBe(true);
+      expect(userInfo.verifiedName).toBe("Rahul Sharma");
+      expect(userInfo.verifiedEmail).toBe("rahul.sharma@example.com");
+      expect(userInfo.userId).toBe("swiggy_user_987654321");
+    });
+
+    it("requires Accept: application/json, text/event-stream for official MCP endpoint", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: async () => JSON.stringify({ jsonrpc: "2.0", result: { content: [] } })
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      await invokeSwiggyMcpTool("get_orders", { limit: 10 }, "swiggy_token_123");
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://mcp.swiggy.com/im",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Accept: "application/json, text/event-stream"
+          })
+        })
+      );
     });
   });
 });

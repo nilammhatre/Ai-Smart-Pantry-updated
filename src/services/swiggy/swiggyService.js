@@ -43,6 +43,27 @@ export const swiggyService = {
     return this.getProvider().isConnected();
   },
 
+  // Proxy: fetch verified account info
+  async getUserInfo() {
+    if (this.getMode() === "real") {
+      return await realSwiggyProvider.getUserInfo();
+    }
+    return {
+      authenticated: mockSwiggyProvider.isConnected(),
+      verifiedName: null,
+      accountLabel: "Simulation Test Session",
+      source: "mock_session"
+    };
+  },
+
+  // Discover documented MCP tools
+  async listMcpTools() {
+    if (this.getMode() === "real") {
+      return await realSwiggyProvider.listMcpTools();
+    }
+    return ["search_products", "get_orders", "get_order_details", "update_cart", "clear_cart", "apply_coupon", "checkout", "track_order"];
+  },
+
   // Check partner whitelisting status
   getWhitelistingNotice() {
     return {
