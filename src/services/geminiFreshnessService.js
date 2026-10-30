@@ -45,7 +45,8 @@ Respond ONLY in valid JSON format:
   "freshnessScore": number
 }`;
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+    const model = import.meta.env?.VITE_GEMINI_MODEL || "gemini-flash-lite-latest";
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
     
     const response = await fetch(url, {
       method: "POST",

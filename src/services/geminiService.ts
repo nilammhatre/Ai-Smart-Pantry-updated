@@ -69,7 +69,11 @@ export function getGeminiApiKey(): string {
   ).trim();
 }
 
-const GEMINI_MODEL = "gemini-2.5-flash";
+export const GEMINI_MODEL = (
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_GEMINI_MODEL) ||
+  (typeof process !== "undefined" && process.env?.VITE_GEMINI_MODEL) ||
+  "gemini-flash-lite-latest"
+);
 
 /**
  * Computes deterministic expiry_date = scan_date + estimated_shelf_life_days
@@ -104,9 +108,21 @@ export async function compressImageBase64(
   }
 
   return new Promise((resolve) => {
+    let resolved = false;
+    const fallbackMime = imageBase64.startsWith("data:image/png") ? "image/png" : "image/jpeg";
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        resolve({ compressedBase64: imageBase64, mimeType: fallbackMime });
+      }
+    }, 500);
+
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = () => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timer);
       let width = img.width;
       let height = img.height;
 
@@ -133,7 +149,9 @@ export async function compressImageBase64(
       resolve({ compressedBase64: compressed, mimeType: "image/jpeg" });
     };
     img.onerror = () => {
-      const fallbackMime = imageBase64.startsWith("data:image/png") ? "image/png" : "image/jpeg";
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timer);
       resolve({ compressedBase64: imageBase64, mimeType: fallbackMime });
     };
     img.src = imageBase64;
@@ -276,7 +294,8 @@ CRITICAL RULES:
   } catch (err: any) {
     console.warn(`[GeminiService] Primary model (${GEMINI_MODEL}) call failed: ${err.message}. Retrying with fallback model...`);
     try {
-      candidateText = await invokeGemini("gemini-1.5-flash");
+      const fallbackModel = GEMINI_MODEL === "gemini-flash-lite-latest" ? "gemini-flash-latest" : "gemini-flash-lite-latest";
+      candidateText = await invokeGemini(fallbackModel);
     } catch (retryErr: any) {
       console.warn(`[GeminiService] Fallback model call also failed: ${retryErr.message}`);
       return {

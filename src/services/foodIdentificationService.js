@@ -199,7 +199,8 @@ Respond strictly in valid JSON format:
   "evidence": "string (concise description of physical morphology features used for identification, e.g. 'Elongated cylindrical body with green skin')"
 }`;
 
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+        const model = import.meta.env?.VITE_GEMINI_MODEL || "gemini-flash-lite-latest";
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
         const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
         const timeoutId = controller ? setTimeout(() => controller.abort(), 10000) : null;
 

@@ -329,7 +329,8 @@ export async function lookupBarcodeWithGemini(barcode, imageBase64) {
 
   try {
     const base64Data = String(imageBase64).replace(/^data:image\/\w+;base64,/, "");
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey.trim())}`, {
+    const model = import.meta.env?.VITE_GEMINI_MODEL || "gemini-flash-lite-latest";
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey.trim())}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(12000) : undefined,
