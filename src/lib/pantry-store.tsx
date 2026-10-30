@@ -160,7 +160,7 @@ export function PantryProvider({ children }: { children: ReactNode }) {
         if (Array.isArray(data.items) && data.items.length > 0) {
           const mapped = data.items.map(mapBackendRowToPantryItem);
           setItems(mapped);
-          pantryDb.saveItems(data.items);
+          pantryDb.saveItems(data.items, false);
         } else {
           syncPantryDb();
         }

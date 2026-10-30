@@ -227,7 +227,7 @@ export const pantryDb = {
       
       // If empty or never initialized, seed with initial demo items containing expiring products
       if (!raw || JSON.parse(raw).length === 0) {
-        this.saveItems(DEFAULT_INITIAL_ITEMS);
+        this.saveItems(DEFAULT_INITIAL_ITEMS, false);
         return DEFAULT_INITIAL_ITEMS.map(enrichPantryItem);
       }
 
@@ -240,11 +240,13 @@ export const pantryDb = {
   },
 
   // Save all items to localStorage
-  saveItems(items) {
+  saveItems(items, notifyStorage = false) {
     try {
       const key = getStorageKey();
       localStorage.setItem(key, JSON.stringify(items));
-      window.dispatchEvent(new Event("storage"));
+      if (notifyStorage && typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("pantry_items_updated"));
+      }
       return true;
     } catch (error) {
       console.error("[PantryDb] Error saving to database:", error);

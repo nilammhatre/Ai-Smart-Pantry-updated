@@ -45,15 +45,24 @@ function ErrorComponent({ error, reset }: ErrorComponentProps) {
     reportLovableError(error, { boundary: "tanstack_root_error_component" });
   }, [error]);
 
+  const errorMessage = error instanceof Error ? error.message : typeof error === "object" ? JSON.stringify(error) : String(error);
+  const errorStack = error instanceof Error ? error.stack : null;
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="max-w-md text-center">
+      <div className="max-w-xl text-center">
         <h1 className="text-xl font-semibold tracking-tight text-foreground">
           This page didn't load
         </h1>
         <p className="mt-2 text-sm text-muted-foreground">
           Something went wrong on our end. You can try refreshing or head back home.
         </p>
+        {errorMessage && (
+          <div className="mt-4 p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-left text-xs font-mono text-destructive overflow-auto max-h-48">
+            <p className="font-bold">Error: {errorMessage}</p>
+            {errorStack && <pre className="mt-2 whitespace-pre-wrap text-[10px] text-muted-foreground">{errorStack}</pre>}
+          </div>
+        )}
         <div className="mt-6 flex flex-wrap justify-center gap-2">
           <button
             onClick={() => {

@@ -31,6 +31,9 @@ import {
   type ItemDetailRecipe
 } from "@/services/geminiService";
 
+import { useRef } from "react";
+import { getDeterministicDaysLeft } from "@/lib/pantry-data";
+
 export const Route = createFileRoute("/app/pantry/$id")({
   head: () => ({
     meta: [
@@ -41,22 +44,34 @@ export const Route = createFileRoute("/app/pantry/$id")({
     ]
   }),
   component: Detail,
+  errorComponent: ({ error, reset }: any) => (
+    <div className="mx-auto max-w-xl p-8 text-center space-y-4">
+      <h2 className="text-xl font-bold text-destructive">Could not load food item</h2>
+      <p className="text-sm text-muted-foreground">{error?.message || "An unexpected error occurred while loading this pantry item."}</p>
+      <div className="flex justify-center gap-3">
+        <Button onClick={() => reset()}>Try Again</Button>
+        <Button variant="outline" asChild><Link to="/app/pantry">Back to Pantry</Link></Button>
+      </div>
+    </div>
+  )
 });
 
-function humanFreshness(item: PantryItem): string {
-  if (item.hasCriticalSpoilage || item.spoilageStatus === "SPOILED" || item.expiresInDays < 0) {
+function humanFreshness(item: PantryItem, explicitDays?: number): string {
+  const days = typeof explicitDays === "number" ? explicitDays : getDeterministicDaysLeft(item);
+  const freshness = typeof item.freshness === "number" && !isNaN(item.freshness) ? item.freshness : 85;
+  if (item.hasCriticalSpoilage || item.spoilageStatus === "SPOILED" || days < 0) {
     return "Past prime";
   }
-  if (item.expiresInDays === 0) {
+  if (days === 0) {
     return "Expires today";
   }
-  if (item.expiresInDays === 1) {
+  if (days === 1) {
     return "Expires tomorrow";
   }
-  if (item.expiresInDays <= 3) {
+  if (days <= 3) {
     return "Use soon";
   }
-  if (item.freshness >= 85) {
+  if (freshness >= 85) {
     return "Peak freshness";
   }
   return "Good condition";
@@ -158,14 +173,28 @@ function Detail() {
   const [completedSteps, setCompletedSteps] = useState<Set<number>>(new Set());
   const [isDeducting, setIsDeducting] = useState(false);
 
+  // Prevent repeated background loops
+  const nutritionEnrichedRef = useRef<Record<string, boolean>>({});
+  const recipesLoadedRef = useRef<Record<string, boolean>>({});
+  const storageTipsLoadedRef = useRef<Record<string, boolean>>({});
+
+  const targetId = String(id || "").trim();
+  let decodedId = targetId;
+  try {
+    decodedId = decodeURIComponent(targetId);
+  } catch {
+    decodedId = targetId;
+  }
+
   // Match by id (exact or decoded), or fallback by name
   const itemFromStore = items.find((i) => {
-    const target = String(id).trim();
-    const decoded = decodeURIComponent(target);
+    if (!i) return false;
+    const sId = String(i.id || "").trim();
+    const sName = (i.name || "").toLowerCase().trim();
     return (
-      String(i.id) === target ||
-      String(i.id) === decoded ||
-      (i.name && i.name.toLowerCase().trim() === decoded.toLowerCase().trim())
+      sId === targetId ||
+      sId === decodedId ||
+      (sName && sName === decodedId.toLowerCase().trim())
     );
   });
 
@@ -182,15 +211,17 @@ function Detail() {
     const fetchDirect = async () => {
       try {
         // 1. Immediate local check from pantryDb
-        const local = pantryDb.getItemById ? pantryDb.getItemById(id) : null;
-        if (local && isMounted) {
-          setRemoteItem(mapBackendRowToPantryItem(local));
-          setIsLoadingItem(false);
-          return;
+        if (typeof window !== "undefined" && pantryDb?.getItemById) {
+          const local = pantryDb.getItemById(targetId) || pantryDb.getItemById(decodedId);
+          if (local && isMounted) {
+            setRemoteItem(mapBackendRowToPantryItem(local));
+            setIsLoadingItem(false);
+            return;
+          }
         }
 
         // 2. Fetch from backend SQLite
-        const res = await fetch(`/api/pantry/${encodeURIComponent(id)}`);
+        const res = await fetch(`/api/pantry/${encodeURIComponent(targetId)}`);
         if (res.ok) {
           const data = await res.json();
           if (data.item && isMounted) {
@@ -208,7 +239,7 @@ function Detail() {
 
     fetchDirect();
     return () => { isMounted = false; };
-  }, [id, itemFromStore]);
+  }, [targetId, decodedId, itemFromStore]);
 
   const item = itemFromStore || remoteItem;
 
@@ -220,35 +251,47 @@ function Detail() {
     }
   }, [item?.id]);
 
-  // 1. Automated AI Nutrition Enrichment (Global for All Items)
+  // 1. Automated AI Nutrition Enrichment (Guarded against infinite re-renders)
   useEffect(() => {
     if (!item) return;
+    const itemId = item.id;
+    if (nutritionEnrichedRef.current[itemId]) return;
+
     const nut = item.nutrition;
     const isZeroOrEmpty = !nut || (Number(nut.calories || 0) === 0 && Number(nut.protein || 0) === 0);
 
     if (isZeroOrEmpty) {
-      estimateNutritionWithGemini(item.name, item.category, item.quantity).then((estimated) => {
-        updateItemNutrition(item.id, {
-          calories: estimated.calories,
-          protein: estimated.protein,
-          carbs: estimated.carbs,
-          fat: estimated.fat,
-          fiber: estimated.fiber,
-          nutrients: item.name.toLowerCase().includes("paneer")
-            ? ["Calcium", "Protein", "Phosphorus", "Vitamin B12"]
-            : ["Vitamins", "Minerals"]
-        });
-      });
+      nutritionEnrichedRef.current[itemId] = true;
+      estimateNutritionWithGemini(item.name, item.category, item.quantity)
+        .then((estimated) => {
+          const newNut = {
+            calories: estimated.calories,
+            protein: estimated.protein,
+            carbs: estimated.carbs,
+            fat: estimated.fat,
+            fiber: estimated.fiber,
+            nutrients: (item.name || "").toLowerCase().includes("paneer")
+              ? ["Calcium", "Protein", "Phosphorus", "Vitamin B12"]
+              : ["Vitamins", "Minerals"]
+          };
+          updateItemNutrition(itemId, newNut);
+          setRemoteItem((prev) => (prev && prev.id === itemId ? { ...prev, nutrition: newNut } : prev));
+        })
+        .catch(() => {});
     }
   }, [item?.id, item?.name]);
 
   // 2. Fetch Multi-Recipe Recommendations (3 to 5 diverse recipes)
   useEffect(() => {
     if (!item) return;
+    const itemId = item.id;
+    if (recipesLoadedRef.current[itemId]) return;
+    recipesLoadedRef.current[itemId] = true;
+
     setLoadingRecipes(true);
     generateItemRecipesWithGemini(item, items)
       .then((recs) => {
-        setRecipesList(recs);
+        setRecipesList(Array.isArray(recs) ? recs : []);
       })
       .catch(() => {})
       .finally(() => {
@@ -259,9 +302,13 @@ function Detail() {
   // 3. Fetch Actionable Gemini Storage Tips
   useEffect(() => {
     if (!item) return;
+    const itemId = item.id;
+    if (storageTipsLoadedRef.current[itemId]) return;
+    storageTipsLoadedRef.current[itemId] = true;
+
     generateStorageTipsWithGemini(item.name, item.category, item.storage)
       .then((tips) => {
-        setStorageTips(tips);
+        setStorageTips(Array.isArray(tips) ? tips : []);
       })
       .catch(() => {});
   }, [item?.id, item?.name, item?.storage]);
@@ -293,13 +340,16 @@ function Detail() {
     );
   }
 
-  const s = statusFor(item.freshness, item.expiresInDays);
-  const n = item.nutrition;
+  const freshness = typeof item.freshness === "number" && !isNaN(item.freshness) ? item.freshness : 85;
+  const daysLeft = getDeterministicDaysLeft(item);
+  const s = statusFor(freshness, daysLeft);
+  const n = item.nutrition || { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, nutrients: [] };
+  const conditionLabel = humanFreshness(item, daysLeft);
 
   // Check for image or stock food image fallback
   let displayImage = item.image;
   if (!displayImage) {
-    const lowerName = item.name.toLowerCase();
+    const lowerName = (item.name || "").toLowerCase();
     for (const [key, img] of Object.entries(foodImages)) {
       if (lowerName.includes(key) || key.includes(lowerName)) {
         displayImage = img;
@@ -384,7 +434,7 @@ function Detail() {
       </Link>
 
       {/* FOOD SAFETY WARNING BANNER */}
-      {(item.hasCriticalSpoilage || item.spoilageStatus === "SPOILED" || item.expiresInDays < 0) && (
+      {(item.hasCriticalSpoilage || item.spoilageStatus === "SPOILED" || daysLeft < 0) && (
         <div className="flex items-start gap-3.5 rounded-2xl bg-spoiled-soft p-4 text-sm text-spoiled border border-spoiled/40 font-medium animate-rise">
           <ShieldAlert className="h-5 w-5 shrink-0 mt-0.5" />
           <div className="flex-1">
@@ -449,27 +499,27 @@ function Detail() {
           <div>
             <p className="text-sm font-semibold uppercase tracking-wider text-primary">{item.category}</p>
             <h1 className="mt-1 text-3xl sm:text-4xl font-bold">{item.name}</h1>
-            <p className="mt-1 text-sm text-muted-foreground">{item.quantity} · {humanFreshness(item)}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{item.quantity} · {conditionLabel}</p>
           </div>
 
           {/* Freshness Ring & Quick Stats */}
           <div className="card-surface flex items-center gap-6 p-5">
             <Ring
-              value={item.freshness}
+              value={freshness}
               status={s}
               size={110}
               label={
                 <div>
-                  <p className="font-display text-2xl font-bold">{item.freshness}%</p>
+                  <p className="font-display text-2xl font-bold">{freshness}%</p>
                   <p className="text-[10px] text-muted-foreground">freshness</p>
                 </div>
               }
             />
             <div className="grid flex-1 grid-cols-2 gap-4 text-sm">
-              <Info icon={Calendar} k="Consume by" v={item.consumeByDate || dateFromNow(item.expiresInDays)} />
-              <Info icon={Package} k="Shelf life" v={daysLabel(item.expiresInDays)} />
-              <Info icon={Thermometer} k="Storage" v={item.storage} />
-              <Info icon={Clock} k="Condition" v={humanFreshness(item)} />
+              <Info icon={Calendar} k="Consume by" v={item.consumeByDate || dateFromNow(daysLeft)} />
+              <Info icon={Package} k="Shelf life" v={daysLabel(daysLeft)} />
+              <Info icon={Thermometer} k="Storage" v={item.storage || "Refrigerator"} />
+              <Info icon={Clock} k="Condition" v={conditionLabel} />
             </div>
           </div>
 
@@ -547,7 +597,7 @@ function Detail() {
                 </div>
               </div>
               <Switch
-                checked={item.reminder}
+                checked={Boolean(item.reminder)}
                 onCheckedChange={() => {
                   toggleReminder(item.id);
                   toast.success(item.reminder ? "Reminders paused for this item." : "Reminder set for 1 day before expiry.");
@@ -621,12 +671,12 @@ function Detail() {
             <div className="flex flex-col items-center text-center max-w-[100px]">
               <div className={cn(
                 "h-8 w-8 rounded-full grid place-items-center font-bold",
-                item.expiresInDays <= 2 ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300" : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+                daysLeft <= 2 ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300" : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
               )}>
                 <Sparkles className="h-4 w-4" />
               </div>
               <span className="font-semibold mt-2 text-foreground">Current State</span>
-              <span className="text-[11px] text-muted-foreground">{humanFreshness(item)}</span>
+              <span className="text-[11px] text-muted-foreground">{conditionLabel}</span>
             </div>
 
             <div className="flex-1 h-0.5 mx-3 bg-muted" />
@@ -635,12 +685,12 @@ function Detail() {
             <div className="flex flex-col items-center text-center max-w-[100px]">
               <div className={cn(
                 "h-8 w-8 rounded-full grid place-items-center font-bold",
-                item.expiresInDays < 0 ? "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300" : "bg-primary-soft text-primary"
+                daysLeft < 0 ? "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300" : "bg-primary-soft text-primary"
               )}>
                 <Calendar className="h-4 w-4" />
               </div>
               <span className="font-semibold mt-2 text-foreground">Consume By</span>
-              <span className="text-[11px] text-muted-foreground">{item.consumeByDate || dateFromNow(item.expiresInDays)}</span>
+              <span className="text-[11px] text-muted-foreground">{item.consumeByDate || dateFromNow(daysLeft)}</span>
             </div>
           </div>
         </div>
@@ -741,10 +791,10 @@ function Detail() {
                 <div>
                   <RecipeItemImage
                     src={r.image}
-                    alt={r.title}
-                    title={r.title}
-                    cuisine={r.cuisine}
-                    timeMins={r.cook_time_mins}
+                    alt={r.title || "Recipe"}
+                    title={r.title || "Recipe"}
+                    cuisine={r.cuisine || "Special"}
+                    timeMins={r.cook_time_mins || 20}
                   />
 
                   <div className="p-4 space-y-2.5">
@@ -852,7 +902,7 @@ function Detail() {
                     <Check className="h-3.5 w-3.5" /> Deducted from Pantry:
                   </h4>
                   <ul className="space-y-1">
-                    {cookingRecipe.matched_pantry_items.map((ing, iIdx) => (
+                    {(cookingRecipe.matched_pantry_items || []).map((ing, iIdx) => (
                       <li key={iIdx} className="font-medium text-foreground">
                         • {ing}
                       </li>
@@ -864,7 +914,7 @@ function Detail() {
                     <UtensilsCrossed className="h-3.5 w-3.5" /> Kitchen Staples:
                   </h4>
                   <ul className="space-y-1 text-muted-foreground">
-                    {cookingRecipe.missing_staples.map((st, sIdx) => (
+                    {(cookingRecipe.missing_staples || []).map((st, sIdx) => (
                       <li key={sIdx}>• {st}</li>
                     ))}
                   </ul>
@@ -877,7 +927,7 @@ function Detail() {
                   <ListOrdered className="h-4 w-4 text-primary" /> Cooking Instructions
                 </h4>
                 <div className="space-y-2">
-                  {cookingRecipe.steps.map((step, idx) => {
+                  {(cookingRecipe.steps || []).map((step, idx) => {
                     const isDone = completedSteps.has(idx);
                     return (
                       <div

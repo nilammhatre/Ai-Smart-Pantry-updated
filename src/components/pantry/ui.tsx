@@ -4,16 +4,22 @@ import { Leaf, Clock, MapPin, UtensilsCrossed } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { statusFor, daysLabel, getDeterministicDaysLeft, getExpiryBadge, type PantryItem, type Status, foodImages } from "@/lib/pantry-data";
 
-export const statusTone: Record<Status, { text: string; bg: string; bar: string; stroke: string }> = {
+export const statusTone: Record<string, { text: string; bg: string; bar: string; stroke: string }> = {
   Fresh: { text: "text-fresh", bg: "bg-fresh-soft", bar: "bg-fresh", stroke: "stroke-fresh" },
   Good: { text: "text-good", bg: "bg-good-soft", bar: "bg-good", stroke: "stroke-good" },
   "Use Soon": { text: "text-warn", bg: "bg-warn-soft", bar: "bg-warn", stroke: "stroke-warn" },
   Expired: { text: "text-rose-600 dark:text-rose-400 font-bold", bg: "bg-rose-500/15 border border-rose-500/30", bar: "bg-rose-600", stroke: "stroke-rose-600" },
   Spoiled: { text: "text-spoiled", bg: "bg-spoiled-soft", bar: "bg-spoiled", stroke: "stroke-spoiled" },
+  fresh: { text: "text-fresh", bg: "bg-fresh-soft", bar: "bg-fresh", stroke: "stroke-fresh" },
+  good: { text: "text-good", bg: "bg-good-soft", bar: "bg-good", stroke: "stroke-good" },
+  "use soon": { text: "text-warn", bg: "bg-warn-soft", bar: "bg-warn", stroke: "stroke-warn" },
+  soon: { text: "text-warn", bg: "bg-warn-soft", bar: "bg-warn", stroke: "stroke-warn" },
+  expired: { text: "text-rose-600 dark:text-rose-400 font-bold", bg: "bg-rose-500/15 border border-rose-500/30", bar: "bg-rose-600", stroke: "stroke-rose-600" },
+  spoiled: { text: "text-spoiled", bg: "bg-spoiled-soft", bar: "bg-spoiled", stroke: "stroke-spoiled" },
 };
 
 export function StatusBadge({ status, className }: { status: Status; className?: string }) {
-  const t = statusTone[status];
+  const t = (status && statusTone[status]) || (status && statusTone[String(status).toLowerCase()]) || statusTone.Fresh;
   return (
     <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold", t.bg, t.text, className)}>
       <span className={cn("h-1.5 w-1.5 rounded-full", t.bar)} />
@@ -63,8 +69,8 @@ export function Ring({ value, size = 96, stroke = 9, status, label }: { value: n
         <circle cx={size / 2} cy={size / 2} r={r} strokeWidth={stroke} className="fill-none stroke-muted" />
         <circle
           cx={size / 2} cy={size / 2} r={r} strokeWidth={stroke} strokeLinecap="round"
-          className={cn("fill-none transition-[stroke-dashoffset] duration-[1200ms] ease-out", statusTone[status].stroke)}
-          strokeDasharray={c} strokeDashoffset={c - (c * shown) / 100}
+          className={cn("fill-none transition-[stroke-dashoffset] duration-[1200ms] ease-out", ((status && statusTone[status]) || (status && statusTone[String(status).toLowerCase()]) || statusTone.Fresh).stroke)}
+          strokeDasharray={c} strokeDashoffset={c - (c * (isNaN(shown) ? 85 : shown)) / 100}
         />
       </svg>
       <div className="absolute inset-0 grid place-items-center text-center">{label ?? <span className="font-display text-lg font-bold">{value}%</span>}</div>
@@ -77,7 +83,7 @@ export function FreshBar({ value, status, className }: { value: number; status: 
   useEffect(() => { const t = setTimeout(() => setW(value), 60); return () => clearTimeout(t); }, [value]);
   return (
     <div className={cn("h-1.5 w-full overflow-hidden rounded-full bg-muted", className)}>
-      <div className={cn("h-full rounded-full transition-[width] duration-1000 ease-out", statusTone[status].bar)} style={{ width: `${w}%` }} />
+      <div className={cn("h-full rounded-full transition-[width] duration-1000 ease-out", ((status && statusTone[status]) || (status && statusTone[String(status).toLowerCase()]) || statusTone.Fresh).bar)} style={{ width: `${w}%` }} />
     </div>
   );
 }
