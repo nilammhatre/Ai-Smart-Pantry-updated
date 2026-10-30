@@ -18,7 +18,8 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter
 } from "@/components/ui/dialog";
-import { usePantry } from "@/lib/pantry-store";
+import { usePantry, mapBackendRowToPantryItem } from "@/lib/pantry-store";
+import { pantryDb } from "@/services/swiggy/pantryDb";
 import { statusFor, dateFromNow, daysLabel, type Storage, type PantryItem, foodImages } from "@/lib/pantry-data";
 import { EmptyState, Ring, StatusBadge } from "@/components/pantry/ui";
 import FreshnessScannerModal from "@/components/pantry/FreshnessScannerModal";
@@ -157,7 +158,59 @@ function Detail() {
   const [completedSteps, setCompletedSteps] = useState<Set<number>>(new Set());
   const [isDeducting, setIsDeducting] = useState(false);
 
-  const item = items.find((i) => i.id === id);
+  // Match by id (exact or decoded), or fallback by name
+  const itemFromStore = items.find((i) => {
+    const target = String(id).trim();
+    const decoded = decodeURIComponent(target);
+    return (
+      String(i.id) === target ||
+      String(i.id) === decoded ||
+      (i.name && i.name.toLowerCase().trim() === decoded.toLowerCase().trim())
+    );
+  });
+
+  const [remoteItem, setRemoteItem] = useState<PantryItem | null>(null);
+  const [isLoadingItem, setIsLoadingItem] = useState(!itemFromStore);
+
+  useEffect(() => {
+    if (itemFromStore) {
+      setIsLoadingItem(false);
+      return;
+    }
+
+    let isMounted = true;
+    const fetchDirect = async () => {
+      try {
+        // 1. Immediate local check from pantryDb
+        const local = pantryDb.getItemById ? pantryDb.getItemById(id) : null;
+        if (local && isMounted) {
+          setRemoteItem(mapBackendRowToPantryItem(local));
+          setIsLoadingItem(false);
+          return;
+        }
+
+        // 2. Fetch from backend SQLite
+        const res = await fetch(`/api/pantry/${encodeURIComponent(id)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.item && isMounted) {
+            setRemoteItem(mapBackendRowToPantryItem(data.item));
+            setIsLoadingItem(false);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn("[PantryDetail] Direct item fetch failed:", err);
+      } finally {
+        if (isMounted) setIsLoadingItem(false);
+      }
+    };
+
+    fetchDirect();
+    return () => { isMounted = false; };
+  }, [id, itemFromStore]);
+
+  const item = itemFromStore || remoteItem;
 
   useEffect(() => {
     if (item) {
@@ -212,6 +265,19 @@ function Detail() {
       })
       .catch(() => {});
   }, [item?.id, item?.name, item?.storage]);
+
+  if (isLoadingItem && !item) {
+    return (
+      <div className="mx-auto max-w-4xl space-y-6 p-6 animate-pulse">
+        <div className="h-6 w-32 rounded-lg bg-muted" />
+        <div className="h-64 w-full rounded-3xl bg-muted" />
+        <div className="space-y-3">
+          <div className="h-8 w-48 rounded-lg bg-muted" />
+          <div className="h-4 w-72 rounded-lg bg-muted" />
+        </div>
+      </div>
+    );
+  }
 
   if (!item) {
     return (

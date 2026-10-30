@@ -21,7 +21,7 @@ function getStorageKey() {
   return `smart_pantry_items_${currentUserId}`;
 }
 
-// Pre-populated seed items with expiring products for immediate reminder testing
+// Pre-populated seed items with fresh products delivered recently
 const DEFAULT_INITIAL_ITEMS = [
   {
     id: "pantry_seed_spinach_01",
@@ -29,10 +29,10 @@ const DEFAULT_INITIAL_ITEMS = [
     category: "Vegetables",
     quantity: 250,
     unit: "g",
-    receivedAt: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString(), // Delivered 4 days ago
+    receivedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(), // Delivered yesterday
     storageCondition: "fridge",
-    freshnessScore: 75,
-    spoilageRisk: "high",
+    freshnessScore: 90,
+    spoilageRisk: "low",
     source: "Swiggy Instamart",
     googleCalendarEventId: "gcal_auto_spinach_01",
     calendarEventId: "gcal_auto_spinach_01",
@@ -48,10 +48,10 @@ const DEFAULT_INITIAL_ITEMS = [
     category: "Dairy",
     quantity: 500,
     unit: "mL",
-    receivedAt: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString(), // Delivered 4 days ago
+    receivedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(), // Delivered yesterday
     storageCondition: "fridge",
-    freshnessScore: 70,
-    spoilageRisk: "high",
+    freshnessScore: 92,
+    spoilageRisk: "low",
     source: "Swiggy Instamart",
     googleCalendarEventId: "gcal_auto_milk_02",
     calendarEventId: "gcal_auto_milk_02",
@@ -67,10 +67,10 @@ const DEFAULT_INITIAL_ITEMS = [
     category: "Bakery",
     quantity: 1,
     unit: "pieces",
-    receivedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(), // Delivered 3 days ago
+    receivedAt: new Date().toISOString(), // Delivered today
     storageCondition: "ambient",
-    freshnessScore: 65,
-    spoilageRisk: "high",
+    freshnessScore: 95,
+    spoilageRisk: "low",
     source: "Swiggy Instamart",
     googleCalendarEventId: "gcal_auto_bread_03",
     calendarEventId: "gcal_auto_bread_03",
@@ -86,10 +86,10 @@ const DEFAULT_INITIAL_ITEMS = [
     category: "Dairy",
     quantity: 200,
     unit: "g",
-    receivedAt: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString(), // Delivered 4 days ago
+    receivedAt: new Date().toISOString(), // Delivered today
     storageCondition: "fridge",
-    freshnessScore: 60,
-    spoilageRisk: "high",
+    freshnessScore: 90,
+    spoilageRisk: "low",
     source: "Swiggy Instamart",
     googleCalendarEventId: "gcal_auto_paneer_04",
     calendarEventId: "gcal_auto_paneer_04",
@@ -105,10 +105,10 @@ const DEFAULT_INITIAL_ITEMS = [
     category: "Vegetables",
     quantity: 1,
     unit: "kg",
-    receivedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(), // Delivered yesterday
+    receivedAt: new Date().toISOString(), // Delivered today
     storageCondition: "ambient",
-    freshnessScore: 95,
-    spoilageRisk: "medium",
+    freshnessScore: 98,
+    spoilageRisk: "low",
     source: "Swiggy Instamart",
     googleCalendarEventId: "gcal_auto_tomatoes_05",
     calendarEventId: "gcal_auto_tomatoes_05",
@@ -250,6 +250,15 @@ export const pantryDb = {
       console.error("[PantryDb] Error saving to database:", error);
       return false;
     }
+  },
+
+  // Get a single item by id
+  getItemById(id) {
+    if (!id) return null;
+    const items = this.getItems();
+    const target = String(id).trim();
+    const decoded = decodeURIComponent(target);
+    return items.find((i) => String(i.id) === target || String(i.id) === decoded || (i.name && i.name.toLowerCase() === decoded.toLowerCase())) || null;
   },
 
   // Seed sample expiring items on demand

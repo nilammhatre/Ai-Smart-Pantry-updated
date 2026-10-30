@@ -131,20 +131,32 @@ function RecipeCardImage({
 }
 
 /**
- * Adapter to unify static recipes with the GeminiStructuredRecipe interface
+ * Adapter to unify static recipes with the GeminiStructuredRecipe interface,
+ * accurately matching against real pantry stock.
  */
 function adaptStaticRecipe(r: (typeof staticRecipes)[0], pantryItems: any[]): GeminiStructuredRecipe {
-  const matchedPantryItems = r.uses.map((uid) => {
-    const found = pantryItems.find(
-      (it) => it.id === uid || it.name.toLowerCase().includes(uid.toLowerCase())
-    );
-    return found ? found.name : uid.charAt(0).toUpperCase() + uid.slice(1);
-  });
+  const matchedPantryItems: string[] = [];
+  const missingIngredients: string[] = [...r.missing];
 
-  const matchPct = Math.min(
-    100,
-    Math.max(50, Math.round((matchedPantryItems.length / Math.max(1, matchedPantryItems.length + r.missing.length)) * 100))
-  );
+  for (const uid of r.uses) {
+    const found = pantryItems.find((it) => {
+      const itName = (it.name || "").toLowerCase();
+      const u = uid.toLowerCase();
+      return it.id === uid || itName.includes(u) || u.includes(itName);
+    });
+    if (found) {
+      if (!matchedPantryItems.includes(found.name)) {
+        matchedPantryItems.push(found.name);
+      }
+    } else {
+      missingIngredients.push(uid.charAt(0).toUpperCase() + uid.slice(1));
+    }
+  }
+
+  const totalRequired = matchedPantryItems.length + missingIngredients.length;
+  const matchPct = totalRequired > 0
+    ? Math.round((matchedPantryItems.length / totalRequired) * 100)
+    : 0;
 
   const prep = Math.round(r.time * 0.35);
   const cook = r.time - prep;
@@ -152,7 +164,7 @@ function adaptStaticRecipe(r: (typeof staticRecipes)[0], pantryItems: any[]): Ge
   const tags = [...r.tags];
   if (r.time <= 20 && !tags.includes("Under 20 Mins")) tags.push("Under 20 Mins");
   if (r.nutrition.protein >= 12 && !tags.includes("High Protein")) tags.push("High Protein");
-  if (pantryItems.some((it) => getDeterministicDaysLeft(it) <= 3 && r.uses.includes(it.id))) {
+  if (matchedPantryItems.length > 0 && pantryItems.some((it) => getDeterministicDaysLeft(it) <= 3 && matchedPantryItems.includes(it.name))) {
     tags.push("Use Expiring First");
   }
 
@@ -165,14 +177,14 @@ function adaptStaticRecipe(r: (typeof staticRecipes)[0], pantryItems: any[]): Ge
     cook_time_mins: cook,
     matched_pantry_items: matchedPantryItems,
     pantry_match_percentage: matchPct,
-    missing_staples: r.missing,
+    missing_staples: missingIngredients,
     steps: r.steps,
     calories_per_serving: r.nutrition.calories,
     tags,
     image: r.image || getRecipeImage({ title: r.name, tags, matched_pantry_items: matchedPantryItems }),
     prep_time: `${r.time} mins`,
     ingredients_used_from_pantry: matchedPantryItems,
-    missing_pantry_staples: r.missing,
+    missing_pantry_staples: missingIngredients,
     quick_instructions: r.steps,
     estimated_savings_inr: r.wasteSaved
   };
@@ -258,50 +270,56 @@ function Recipes() {
     });
   };
 
-  // Filtered recipe list
+  // Filtered recipe list (sorted by actual pantry match percentage and expiring priority)
   const filteredRecipes = useMemo(() => {
-    if (activeFilters.has("All Recipes") && activeFilters.size === 1) {
-      return allRecipes;
+    let list = allRecipes;
+    if (!(activeFilters.has("All Recipes") && activeFilters.size === 1)) {
+      const expiringNames = new Set(expiringSoonItems.map((it) => it.name.toLowerCase()));
+      list = allRecipes.filter((recipe) => {
+        let matches = true;
+
+        if (activeFilters.has("Use Expiring First")) {
+          const usesExpiring =
+            recipe.tags.includes("Use Expiring First") ||
+            recipe.matched_pantry_items.some((ing) =>
+              Array.from(expiringNames).some((en) => ing.toLowerCase().includes(en) || en.includes(ing.toLowerCase()))
+            );
+          if (!usesExpiring) matches = false;
+        }
+
+        if (activeFilters.has("Under 20 Mins")) {
+          const totalTime = recipe.prep_time_mins + recipe.cook_time_mins;
+          const isQuick = totalTime <= 20 || recipe.tags.includes("Under 20 Mins");
+          if (!isQuick) matches = false;
+        }
+
+        if (activeFilters.has("High Protein")) {
+          const isHighProtein =
+            recipe.tags.includes("High Protein") ||
+            recipe.calories_per_serving >= 240 ||
+            recipe.matched_pantry_items.some((m) =>
+              ["paneer", "egg", "milk", "curd", "chicken", "dal", "tofu"].some((p) => m.toLowerCase().includes(p))
+            );
+          if (!isHighProtein) matches = false;
+        }
+
+        if (activeFilters.has("Vegetarian")) {
+          const isVeg =
+            recipe.tags.includes("Vegetarian") ||
+            !recipe.matched_pantry_items.some((m) => ["chicken", "meat", "fish", "pork"].some((nonVeg) => m.toLowerCase().includes(nonVeg)));
+          if (!isVeg) matches = false;
+        }
+
+        return matches;
+      });
     }
 
-    const expiringNames = new Set(expiringSoonItems.map((it) => it.name.toLowerCase()));
-
-    return allRecipes.filter((recipe) => {
-      let matches = true;
-
-      if (activeFilters.has("Use Expiring First")) {
-        const usesExpiring =
-          recipe.tags.includes("Use Expiring First") ||
-          recipe.matched_pantry_items.some((ing) =>
-            Array.from(expiringNames).some((en) => ing.toLowerCase().includes(en) || en.includes(ing.toLowerCase()))
-          );
-        if (!usesExpiring) matches = false;
-      }
-
-      if (activeFilters.has("Under 20 Mins")) {
-        const totalTime = recipe.prep_time_mins + recipe.cook_time_mins;
-        const isQuick = totalTime <= 20 || recipe.tags.includes("Under 20 Mins");
-        if (!isQuick) matches = false;
-      }
-
-      if (activeFilters.has("High Protein")) {
-        const isHighProtein =
-          recipe.tags.includes("High Protein") ||
-          recipe.calories_per_serving >= 240 ||
-          recipe.matched_pantry_items.some((m) =>
-            ["paneer", "egg", "milk", "curd", "chicken", "dal", "tofu"].some((p) => m.toLowerCase().includes(p))
-          );
-        if (!isHighProtein) matches = false;
-      }
-
-      if (activeFilters.has("Vegetarian")) {
-        const isVeg =
-          recipe.tags.includes("Vegetarian") ||
-          !recipe.matched_pantry_items.some((m) => ["chicken", "meat", "fish", "pork"].some((nonVeg) => m.toLowerCase().includes(nonVeg)));
-        if (!isVeg) matches = false;
-      }
-
-      return matches;
+    // Sort: Recipes with higher pantry match % come first
+    return [...list].sort((a, b) => {
+      const aExpiring = a.tags.includes("Use Expiring First") ? 1 : 0;
+      const bExpiring = b.tags.includes("Use Expiring First") ? 1 : 0;
+      if (bExpiring !== aExpiring) return bExpiring - aExpiring;
+      return (b.pantry_match_percentage || 0) - (a.pantry_match_percentage || 0);
     });
   }, [allRecipes, activeFilters, expiringSoonItems]);
 

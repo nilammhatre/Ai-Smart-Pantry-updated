@@ -15,7 +15,7 @@ export const INSTACART_DEMO_ORDERS = [
     order_dow: 2, // Tuesday
     order_hour_of_day: 11,
     days_since_prior_order: 7,
-    order_date: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(), // Yesterday
+    order_date: new Date().toISOString(), // Today
     total_items: 6,
     items: [
       {
@@ -80,7 +80,7 @@ export const INSTACART_DEMO_ORDERS = [
     order_dow: 5, // Friday
     order_hour_of_day: 15,
     days_since_prior_order: 5,
-    order_date: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(), // 3 days ago
+    order_date: new Date(Date.now() - 3 * 3600 * 1000).toISOString(), // 3 hours ago
     total_items: 5,
     items: [
       {
@@ -136,7 +136,7 @@ export const INSTACART_DEMO_ORDERS = [
     order_dow: 0, // Sunday
     order_hour_of_day: 9,
     days_since_prior_order: 10,
-    order_date: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(), // 5 days ago
+    order_date: new Date(Date.now() - 12 * 3600 * 1000).toISOString(), // Earlier today
     total_items: 6,
     items: [
       {

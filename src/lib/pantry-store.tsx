@@ -34,7 +34,7 @@ interface Store {
 
 const Ctx = createContext<Store | null>(null);
 
-function mapBackendRowToPantryItem(r: any): PantryItem {
+export function mapBackendRowToPantryItem(r: any): PantryItem {
   const dateStr = r.expiry_date || r.consume_by_date || r.consumeByDate || r.printed_expiry_date || r.printedExpiryDate;
   let dynamicDays: number;
   if (dateStr) {

@@ -5,20 +5,38 @@ import { normalizeOrder } from "./normalizer";
 const TOKEN_KEY = "swiggy_mock_access_token";
 const ORDERS_KEY = "swiggy_mock_orders_history";
 
+function normalizeMockOrderDates(orders) {
+  const now = Date.now();
+  return (orders || []).map((order, idx) => {
+    const orderTime = new Date(order.createdAt || 0).getTime();
+    // If order date is older than 2 days, roll it forward to today so groceries are fresh
+    if (isNaN(orderTime) || (now - orderTime) > 2 * 24 * 60 * 60 * 1000) {
+      const deliveredDate = new Date(now - (idx * 2 + 1) * 3600 * 1000); // 1h ago, 3h ago
+      const createdDate = new Date(deliveredDate.getTime() - 20 * 60 * 1000); // 20 min Instamart delivery
+      return {
+        ...order,
+        createdAt: createdDate.toISOString(),
+        deliveredAt: deliveredDate.toISOString()
+      };
+    }
+    return order;
+  });
+}
+
 function getStoredMockOrders() {
   try {
-    if (typeof localStorage === "undefined") return mockData.orders;
+    if (typeof localStorage === "undefined") return normalizeMockOrderDates(mockData.orders);
     const raw = localStorage.getItem(ORDERS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+        return normalizeMockOrderDates(parsed);
       }
     }
   } catch (e) {
     console.error("[Mock Swiggy] Error reading orders from localStorage:", e);
   }
-  return mockData.orders;
+  return normalizeMockOrderDates(mockData.orders);
 }
 
 function saveStoredMockOrders(orders) {

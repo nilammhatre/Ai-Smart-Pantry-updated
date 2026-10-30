@@ -16,8 +16,8 @@ function RecipeDetail() {
   const { items, addShop } = usePantry();
   const r = recipes.find((x) => x.id === id);
   if (!r) return <EmptyState title="Recipe not found" body="It may have been removed." action={<Button asChild><Link to="/app/recipes">All recipes</Link></Button>} />;
-  const available = r.uses.map((u) => items.find((i) => i.id === u)).filter(Boolean);
-  const notInPantry = r.uses.filter((u) => !items.some((i) => i.id === u));
+  const available = r.uses.map((u) => items.find((i) => i.id === u || i.name.toLowerCase().includes(u.toLowerCase()) || u.toLowerCase().includes(i.name.toLowerCase()))).filter(Boolean);
+  const notInPantry = r.uses.filter((u) => !items.some((i) => i.id === u || i.name.toLowerCase().includes(u.toLowerCase()) || u.toLowerCase().includes(i.name.toLowerCase())));
 
   return (
     <div className="space-y-8">
