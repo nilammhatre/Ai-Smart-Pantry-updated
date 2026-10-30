@@ -43,42 +43,63 @@ export function isGoogleCalendarConfigured(): boolean {
 export async function refreshGoogleAccessTokenServer(): Promise<{ success: boolean; accessToken?: string; error?: string }> {
   const { clientId, clientSecret, refreshToken } = getGoogleBackendConfig();
 
-  if (!refreshToken || !clientId || !clientSecret) {
+  if (!refreshToken) {
     return {
       success: false,
-      error: "Google Calendar OAuth 2.0 is not authorized. Missing Client ID, Client Secret, or Refresh Token in backend environment."
+      error: "Google Calendar OAuth 2.0 is not authorized. Missing Refresh Token in backend environment."
     };
   }
 
+  // 1. Try standard RFC 6749 OAuth token refresh if clientId & clientSecret exist
+  if (clientId && clientSecret) {
+    try {
+      const res = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        signal: AbortSignal.timeout(6000),
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          refresh_token: refreshToken,
+          grant_type: "refresh_token"
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.access_token) {
+        cachedAccessToken = data.access_token;
+        tokenExpiresAt = Date.now() + (data.expires_in || 3600) * 1000 - 60000;
+        return { success: true, accessToken: data.access_token };
+      }
+    } catch (_err) {
+      // Fall through to playground refresh fallback
+    }
+  }
+
+  // 2. Resilient fallback for Google OAuth Playground-generated tokens
   try {
-    const res = await fetch("https://oauth2.googleapis.com/token", {
+    const pgRes = await fetch("https://developers.google.com/oauthplayground/refreshAccessToken", {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: { "Content-Type": "application/json" },
       signal: AbortSignal.timeout(6000),
-      body: new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
-        refresh_token: refreshToken,
-        grant_type: "refresh_token"
+      body: JSON.stringify({
+        token_uri: "https://oauth2.googleapis.com/token",
+        refresh_token: refreshToken
       })
     });
-
-    const data = await res.json();
-    if (res.ok && data.access_token) {
-      cachedAccessToken = data.access_token;
-      tokenExpiresAt = Date.now() + (data.expires_in || 3600) * 1000 - 60000;
-      return { success: true, accessToken: data.access_token };
-    } else {
-      const err = data.error_description || data.error || `HTTP ${res.status}`;
-      lastGoogleAuthErrorTime = Date.now();
-      lastGoogleAuthErrorMessage = `Google OAuth Token Refresh Failed: ${err}`;
-      return { success: false, error: lastGoogleAuthErrorMessage };
+    const pgData = await pgRes.json();
+    if (pgRes.ok && pgData.access_token) {
+      cachedAccessToken = pgData.access_token;
+      tokenExpiresAt = Date.now() + (pgData.expires_in || 3600) * 1000 - 60000;
+      return { success: true, accessToken: pgData.access_token };
     }
-  } catch (err: any) {
-    lastGoogleAuthErrorTime = Date.now();
-    lastGoogleAuthErrorMessage = `Network exception during Google token refresh: ${err.message}`;
-    return { success: false, error: lastGoogleAuthErrorMessage };
+  } catch (_pgErr) {
+    // Continue to error reporting
   }
+
+  lastGoogleAuthErrorTime = Date.now();
+  lastGoogleAuthErrorMessage = "Google OAuth Token Refresh Failed: Invalid or expired refresh token.";
+  return { success: false, error: lastGoogleAuthErrorMessage };
 }
 
 export async function getValidServerAccessToken(): Promise<string | null> {

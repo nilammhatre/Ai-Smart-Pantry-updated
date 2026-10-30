@@ -101,37 +101,57 @@ export async function refreshGoogleAccessToken() {
   const clientId = GOOGLE_CLIENT_ID || (typeof localStorage !== "undefined" ? localStorage.getItem("smart_pantry_google_client_id") || "" : "");
   const clientSecret = GOOGLE_CLIENT_SECRET || (typeof localStorage !== "undefined" ? localStorage.getItem("smart_pantry_google_client_secret") || "" : "");
 
-  if (!refreshToken || !clientId || !clientSecret) {
-    console.warn("[GoogleCalendarAPI] Cannot auto-refresh access token: Missing Refresh Token or Client Secret.");
+  if (!refreshToken) {
+    console.warn("[GoogleCalendarAPI] Cannot auto-refresh access token: Missing Refresh Token.");
     return null;
   }
 
+  // 1. Try standard RFC 6749 OAuth token refresh if clientId & clientSecret exist
+  if (clientId && clientSecret) {
+    try {
+      console.log("[GoogleCalendarAPI] Auto-refreshing Google OAuth access token using refresh_token...");
+      const res = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          refresh_token: refreshToken,
+          grant_type: "refresh_token"
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.access_token) {
+        setStoredGoogleAccessToken(data.access_token);
+        console.log("[GoogleCalendarAPI] ✅ Successfully refreshed Google OAuth access token!");
+        return data.access_token;
+      }
+    } catch (_err) {
+      // Fall through to playground refresh fallback
+    }
+  }
+
+  // 2. Resilient fallback for Google OAuth Playground-generated tokens
   try {
-    console.log("[GoogleCalendarAPI] Auto-refreshing Google OAuth access token using refresh_token...");
-    const res = await fetch("https://oauth2.googleapis.com/token", {
+    const pgRes = await fetch("https://developers.google.com/oauthplayground/refreshAccessToken", {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
-        refresh_token: refreshToken,
-        grant_type: "refresh_token"
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        token_uri: "https://oauth2.googleapis.com/token",
+        refresh_token: refreshToken
       })
     });
-
-    const data = await res.json();
-    if (res.ok && data.access_token) {
-      setStoredGoogleAccessToken(data.access_token);
-      console.log("[GoogleCalendarAPI] ✅ Successfully refreshed Google OAuth access token!");
-      return data.access_token;
-    } else {
-      console.error("[GoogleCalendarAPI] Refresh token exchange failed:", data.error_description || data.error);
-      return null;
+    const pgData = await pgRes.json();
+    if (pgRes.ok && pgData.access_token) {
+      setStoredGoogleAccessToken(pgData.access_token);
+      console.log("[GoogleCalendarAPI] ✅ Successfully refreshed Google OAuth access token via playground handler!");
+      return pgData.access_token;
     }
   } catch (err) {
     console.error("[GoogleCalendarAPI] Exception during token refresh:", err);
-    return null;
   }
+  return null;
 }
 
 /**
